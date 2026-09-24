@@ -1,0 +1,36 @@
+{
+  "name": "legaltech-colombia",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "description": "LegalTech platform for traffic and transport infractions in Colombia",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "eslint .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose -f infra/docker/docker-compose.yml up -d --wait",
+    "db:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "db:validate": "pnpm --filter @legaltech/database run validate",
+    "db:migrate": "pnpm --filter @legaltech/database run migrate:dev",
+    "db:deploy": "pnpm --filter @legaltech/database run migrate:deploy"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

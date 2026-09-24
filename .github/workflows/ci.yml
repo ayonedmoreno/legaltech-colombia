@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: legaltech_owner
+          POSTGRES_PASSWORD: legaltech_owner_dev
+          POSTGRES_DB: legaltech
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U legaltech_owner -d legaltech"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      OWNER_PSQL_URL: postgresql://legaltech_owner:legaltech_owner_dev@localhost:5432/legaltech
+      APP_PSQL_URL: postgresql://legaltech_app:legaltech_app_dev@localhost:5432/legaltech
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Environment file
+        run: cp .env.example .env
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Docker Compose config
+        run: docker compose -f infra/docker/docker-compose.yml config --quiet
+
+      - name: Create application role
+        run: psql "$OWNER_PSQL_URL" -v ON_ERROR_STOP=1 -f infra/docker/postgres/init/01-roles.sql
+
+      - name: Prisma validate
+        run: pnpm --filter @legaltech/database run validate
+
+      - name: Prisma migrate deploy
+        run: pnpm --filter @legaltech/database run migrate:deploy
+
+      - name: Prisma schema drift check
+        run: |
+          set -a; . ./.env; set +a
+          pnpm --filter @legaltech/database exec prisma migrate diff \
+            --from-url "$DATABASE_MIGRATION_URL" \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code
+
+      - name: Verify audit_logs is append-only
+        run: |
+          psql "$APP_PSQL_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO audit_logs (action) VALUES ('ci.check');"
+          if psql "$APP_PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE audit_logs SET action = 'x';"; then
+            echo "UPDATE on audit_logs must fail for the application role"; exit 1
+          fi
+          if psql "$APP_PSQL_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM audit_logs;"; then
+            echo "DELETE on audit_logs must fail for the application role"; exit 1
+          fi
+          if psql "$OWNER_PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE audit_logs SET action = 'x';"; then
+            echo "UPDATE on audit_logs must fail for the owner role (trigger)"; exit 1
+          fi

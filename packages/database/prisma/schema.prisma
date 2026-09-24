@@ -1,0 +1,137 @@
+// Identity slice only (DATABASE_SPEC.md v0.1). Other entities are added by approved slices.
+// Migrations are versioned SQL in ./migrations; see README.md in this package.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime connection (application role).
+  url       = env("DATABASE_URL")
+  // Prisma CLI (migrate, diff) uses the owner role.
+  directUrl = env("DATABASE_MIGRATION_URL")
+}
+
+enum Role {
+  USER
+  PROFESSIONAL
+  ADMIN
+  SUPER_ADMIN
+
+  @@map("role")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("user_status")
+}
+
+enum SessionRevokedReason {
+  LOGOUT
+  LOGOUT_ALL
+  PASSWORD_RESET
+  PASSWORD_CHANGE
+  ROTATED
+  ROLE_CHANGE
+  ADMIN_REVOKE
+  EXPIRED
+
+  @@map("session_revoked_reason")
+}
+
+model User {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String     @unique
+  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(6)
+  passwordHash    String     @map("password_hash")
+  fullName        String     @map("full_name")
+  role            Role       @default(USER)
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  auditLogs               AuditLog[]
+
+  @@map("users")
+}
+
+model Session {
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  tokenHash         String                @unique @map("token_hash")
+  csrfTokenHash     String                @map("csrf_token_hash")
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt        DateTime              @map("last_seen_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime              @map("idle_expires_at") @db.Timestamptz(6)
+  absoluteExpiresAt DateTime              @map("absolute_expires_at") @db.Timestamptz(6)
+  rotatedAt         DateTime?             @map("rotated_at") @db.Timestamptz(6)
+  revokedAt         DateTime?             @map("revoked_at") @db.Timestamptz(6)
+  revokedReason     SessionRevokedReason? @map("revoked_reason")
+  ip                String?               @db.Inet
+  userAgent         String?               @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, revokedAt])
+  @@index([absoluteExpiresAt])
+  @@map("sessions")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(6)
+  requestedIp String?   @map("requested_ip") @db.Inet
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model AuditLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  actorRole     Role?    @map("actor_role")
+  action        String
+  entityType    String?  @map("entity_type")
+  entityId      String?  @map("entity_id")
+  previousValue Json?    @map("previous_value")
+  newValue      Json?    @map("new_value")
+  metadata      Json?
+  requestId     String?  @map("request_id")
+  ip            String?  @db.Inet
+  userAgent     String?  @map("user_agent")
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([actorUserId, occurredAt])
+  @@index([action, occurredAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

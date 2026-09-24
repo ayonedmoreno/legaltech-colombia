@@ -1,0 +1,13 @@
+title = "legaltech-colombia gitleaks config"
+
+[extend]
+useDefault = true
+
+# Local development placeholders only (no real secrets are ever committed).
+[allowlist]
+description = "Development placeholders"
+paths = [
+  '''\.env\.example$''',
+  '''infra/docker/.*''',
+  '''\.github/workflows/ci\.yml$''',
+]
