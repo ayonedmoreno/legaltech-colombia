@@ -13,7 +13,12 @@ describe("session lifecycle", () => {
     let now = new Date("2026-01-01T00:00:00Z");
     const clock = () => now;
 
-    const created = await createSessionForUser(repository, user, { ip: null, userAgent: null }, clock);
+    const created = await createSessionForUser(
+      repository,
+      user,
+      { ip: null, userAgent: null },
+      clock,
+    );
 
     now = new Date(now.getTime() + 60_000);
     const loaded = await loadValidSession(repository, created.sessionRaw, clock);
@@ -44,7 +49,12 @@ describe("session lifecycle", () => {
     let now = new Date("2026-01-01T00:00:00Z");
     const clock = () => now;
     // USER idle window is 7 days.
-    const created = await createSessionForUser(repository, user, { ip: null, userAgent: null }, clock);
+    const created = await createSessionForUser(
+      repository,
+      user,
+      { ip: null, userAgent: null },
+      clock,
+    );
 
     now = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
     expect(await loadValidSession(repository, created.sessionRaw, clock)).toBeNull();
@@ -56,7 +66,12 @@ describe("session lifecycle", () => {
     let now = new Date("2026-01-01T00:00:00Z");
     const clock = () => now;
     // USER absolute lifetime is 30 days.
-    const created = await createSessionForUser(repository, user, { ip: null, userAgent: null }, clock);
+    const created = await createSessionForUser(
+      repository,
+      user,
+      { ip: null, userAgent: null },
+      clock,
+    );
 
     // Touch the session every 2 days (well within the 7-day idle window each time) until
     // the absolute lifetime is exceeded, to prove the absolute expiry is a hard ceiling

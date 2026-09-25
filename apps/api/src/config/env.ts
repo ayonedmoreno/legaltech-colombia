@@ -16,13 +16,10 @@ const envSchema = z.object({
   // Compared verbatim with the browser's Origin header (auth.origin.ts), so it must be
   // exactly a serialized origin. Rejected rather than normalized: a trailing slash or path
   // would otherwise make every same-origin check fail at runtime.
-  APP_ORIGIN: z
-    .string()
-    .url()
-    .refine(isBareOrigin, {
-      message:
-        "must be a bare origin (scheme://host[:port]) with no trailing slash, path, query or fragment",
-    }),
+  APP_ORIGIN: z.string().url().refine(isBareOrigin, {
+    message:
+      "must be a bare origin (scheme://host[:port]) with no trailing slash, path, query or fragment",
+  }),
   DATABASE_URL: z.string().min(1),
 });
 

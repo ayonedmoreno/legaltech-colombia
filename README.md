@@ -30,15 +30,15 @@ Checks: `GET http://127.0.0.1:4000/api/health/live` and `/api/health/ready`.
 
 ## Scripts
 
-| Script                                    | Purpose                                             |
-| ----------------------------------------- | --------------------------------------------------- |
-| `pnpm lint`                               | ESLint (includes package dependency boundaries)     |
-| `pnpm typecheck`                          | TypeScript on every workspace                       |
-| `pnpm test`                               | Vitest on every workspace                           |
-| `pnpm build`                              | Builds packages and apps (Turborepo)                |
-| `pnpm format` / `pnpm format:check`       | Prettier                                            |
-| `pnpm db:up` / `db:down`                  | Start / stop local PostgreSQL                       |
-| `pnpm db:validate` / `db:migrate` / `db:deploy` | Prisma validate / dev migration / deploy      |
+| Script                                          | Purpose                                         |
+| ----------------------------------------------- | ----------------------------------------------- |
+| `pnpm lint`                                     | ESLint (includes package dependency boundaries) |
+| `pnpm typecheck`                                | TypeScript on every workspace                   |
+| `pnpm test`                                     | Vitest on every workspace                       |
+| `pnpm build`                                    | Builds packages and apps (Turborepo)            |
+| `pnpm format` / `pnpm format:check`             | Prettier                                        |
+| `pnpm db:up` / `db:down`                        | Start / stop local PostgreSQL                   |
+| `pnpm db:validate` / `db:migrate` / `db:deploy` | Prisma validate / dev migration / deploy        |
 
 Run `pnpm format` once after the first install and commit the result before opening the first PR.
 

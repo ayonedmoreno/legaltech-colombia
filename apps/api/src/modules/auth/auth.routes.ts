@@ -1,4 +1,9 @@
-import type { CsrfResponse, LoginResponse, MeResponse, RegisterResponse } from "@legaltech/contracts";
+import type {
+  CsrfResponse,
+  LoginResponse,
+  MeResponse,
+  RegisterResponse,
+} from "@legaltech/contracts";
 import { loginRequestSchema, registerRequestSchema } from "@legaltech/contracts";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import type { ZodError } from "zod";
@@ -21,7 +26,11 @@ export interface AuthRouteDeps {
 }
 
 function requestContext(request: FastifyRequest): RequestContext {
-  return { ip: request.ip, userAgent: request.headers["user-agent"] ?? null, requestId: request.id };
+  return {
+    ip: request.ip,
+    userAgent: request.headers["user-agent"] ?? null,
+    requestId: request.id,
+  };
 }
 
 /**
@@ -60,7 +69,10 @@ function enforceIpLimit(limiter: FixedWindowRateLimiter, request: FastifyRequest
   }
 }
 
-export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (app, { authService, appOrigin }) => {
+export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
+  app,
+  { authService, appOrigin },
+) => {
   // Per-IP, in-memory limits (SECURITY_SPEC.md §7 known limitation: not shared across
   // process instances). Created here, inside the plugin, rather than at module scope: each
   // Fastify instance — including a fresh one per test via buildTestApp — gets its own

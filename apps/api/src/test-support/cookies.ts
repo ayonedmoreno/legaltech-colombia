@@ -9,7 +9,11 @@ export function findSetCookie(
   setCookieHeader: string | string[] | undefined,
   name: string,
 ): ParsedCookie | undefined {
-  const headers = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : [];
+  const headers = Array.isArray(setCookieHeader)
+    ? setCookieHeader
+    : setCookieHeader
+      ? [setCookieHeader]
+      : [];
   for (const header of headers) {
     const [pair, ...attributes] = header.split(";").map((part) => part.trim());
     const eq = pair!.indexOf("=");

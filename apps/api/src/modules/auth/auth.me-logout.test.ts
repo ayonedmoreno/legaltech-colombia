@@ -5,7 +5,6 @@ import { buildTestApp } from "../../test-support/build-test-app.js";
 const ORIGIN = "http://localhost:3000";
 const CREDENTIALS = { email: "ana@example.com", password: "correct horse battery" };
 
-
 async function loggedInApp(overrides: Parameters<typeof buildTestApp>[0] = {}) {
   const testApp = await buildTestApp(overrides);
   const { app } = testApp;
@@ -104,7 +103,9 @@ describe("POST /api/auth/logout", () => {
     expect(session?.revokedReason).toBe("LOGOUT");
 
     const cleared = findSetCookie(response.headers["set-cookie"], "__Host-session");
-    expect(cleared?.attributes.some((a) => /^Max-Age=0$/i.test(a) || /^Expires=/i.test(a))).toBe(true);
+    expect(cleared?.attributes.some((a) => /^Max-Age=0$/i.test(a) || /^Expires=/i.test(a))).toBe(
+      true,
+    );
     expect(repository.auditLog.some((e) => e.action === "auth.logout")).toBe(true);
 
     // The now-revoked session must no longer authenticate.
@@ -172,7 +173,11 @@ describe("POST /api/auth/logout", () => {
 
   it("is safe to call with no session at all", async () => {
     const { app } = await loggedInApp();
-    const response = await app.inject({ method: "POST", url: "/api/auth/logout", headers: { origin: ORIGIN } });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: { origin: ORIGIN },
+    });
     expect(response.statusCode).toBe(204);
     await app.close();
   });

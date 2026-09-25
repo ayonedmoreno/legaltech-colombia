@@ -5,7 +5,6 @@ import { buildTestApp } from "../../test-support/build-test-app.js";
 const ORIGIN = "http://localhost:3000";
 const CREDENTIALS = { email: "ana@example.com", password: "correct horse battery" };
 
-
 async function loggedInApp() {
   const testApp = await buildTestApp();
   const { app } = testApp;
@@ -45,7 +44,9 @@ describe("GET /api/auth/csrf", () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/auth/csrf",
-      headers: { cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": "stale-value" }) },
+      headers: {
+        cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": "stale-value" }),
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -82,7 +83,10 @@ describe("CSRF enforcement on mutating requests (logout)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/auth/logout",
-      headers: { origin: ORIGIN, cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }) },
+      headers: {
+        origin: ORIGIN,
+        cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }),
+      },
     });
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe("CSRF_INVALID");

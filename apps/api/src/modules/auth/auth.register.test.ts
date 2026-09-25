@@ -60,7 +60,11 @@ describe("POST /api/auth/register", () => {
 
   it("always assigns the USER role, regardless of what the client sends", async () => {
     const { app, repository } = await buildTestApp();
-    await register(app, { email: "ana@example.com", password: "correct horse battery", fullName: "Ana" });
+    await register(app, {
+      email: "ana@example.com",
+      password: "correct horse battery",
+      fullName: "Ana",
+    });
 
     const [user] = [...repository.users.values()];
     expect(user?.role).toBe("USER");
@@ -84,7 +88,11 @@ describe("POST /api/auth/register", () => {
 
   it("does not create a second account for a duplicate email, but responds identically", async () => {
     const { app, repository } = await buildTestApp();
-    const payload = { email: "ana@example.com", password: "correct horse battery", fullName: "Ana" };
+    const payload = {
+      email: "ana@example.com",
+      password: "correct horse battery",
+      fullName: "Ana",
+    };
 
     const first = await register(app, payload);
     const second = await register(app, { ...payload, fullName: "Ana Otra" });
@@ -99,7 +107,11 @@ describe("POST /api/auth/register", () => {
 
   it("rejects invalid input (short password)", async () => {
     const { app } = await buildTestApp();
-    const response = await register(app, { email: "ana@example.com", password: "short", fullName: "Ana" });
+    const response = await register(app, {
+      email: "ana@example.com",
+      password: "short",
+      fullName: "Ana",
+    });
 
     expect(response.statusCode).toBe(400);
     const body = response.json();

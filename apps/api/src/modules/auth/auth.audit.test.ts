@@ -5,7 +5,6 @@ import { buildTestApp } from "../../test-support/build-test-app.js";
 const ORIGIN = "http://localhost:3000";
 const PASSWORD = "correct horse battery";
 
-
 describe("auth audit trail", () => {
   it("uses exactly the approved event names and never records secrets", async () => {
     const { app, repository } = await buildTestApp();

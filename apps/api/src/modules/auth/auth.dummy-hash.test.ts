@@ -1,4 +1,5 @@
 import { hash, verify } from "@node-rs/argon2";
+import type * as Argon2 from "@node-rs/argon2";
 import { describe, expect, it, vi } from "vitest";
 import { buildTestApp } from "../../test-support/build-test-app.js";
 
@@ -6,7 +7,7 @@ import { buildTestApp } from "../../test-support/build-test-app.js";
 // dummyPasswordHash() is counted too. Kept in its own file: vitest isolates modules per
 // file, so the per-process dummy hash starts out not yet computed, as in a fresh server.
 vi.mock("@node-rs/argon2", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@node-rs/argon2")>();
+  const actual = await importOriginal<typeof Argon2>();
   return { ...actual, hash: vi.fn(actual.hash), verify: vi.fn(actual.verify) };
 });
 

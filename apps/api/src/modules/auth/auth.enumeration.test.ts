@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hashPassword, verifyPassword } from "../../security/password.js";
+import type * as PasswordModule from "../../security/password.js";
 import { buildTestApp } from "../../test-support/build-test-app.js";
 
 // Wrap (not replace) the real Argon2id functions so each test can count how much hashing
 // work a request did: equal work on both paths is what keeps response times from revealing
 // whether an email is registered.
 vi.mock("../../security/password.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../security/password.js")>();
+  const actual = await importOriginal<typeof PasswordModule>();
   return {
     ...actual,
     hashPassword: vi.fn(actual.hashPassword),
@@ -74,11 +75,17 @@ describe("no user enumeration through Argon2id timing", () => {
   it("register hashes the password for a duplicate email, as for a new account", async () => {
     const { app, repository } = await buildTestApp();
 
-    const created = await post(app, "/api/auth/register", { ...CREDENTIALS, fullName: "Ana Gómez" });
+    const created = await post(app, "/api/auth/register", {
+      ...CREDENTIALS,
+      fullName: "Ana Gómez",
+    });
     const newAccountHashes = vi.mocked(hashPassword).mock.calls.length;
 
     vi.mocked(hashPassword).mockClear();
-    const duplicate = await post(app, "/api/auth/register", { ...CREDENTIALS, fullName: "Otra Persona" });
+    const duplicate = await post(app, "/api/auth/register", {
+      ...CREDENTIALS,
+      fullName: "Otra Persona",
+    });
 
     expect(created.statusCode).toBe(202);
     expect(duplicate.statusCode).toBe(202);

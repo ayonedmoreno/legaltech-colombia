@@ -5,6 +5,7 @@ Este ZIP contiene solo los archivos nuevos o modificados respecto a tu repositor
 `.github/workflows/ci.yml` ni el `package.json` raíz: ya los tienes.
 
 ## Archivos nuevos (25)
+
 - apps/api/src/common/http-error.ts
 - apps/api/src/modules/auth/auth.audit.test.ts
 - apps/api/src/modules/auth/auth.cookies.ts
@@ -32,6 +33,7 @@ Este ZIP contiene solo los archivos nuevos o modificados respecto a tu repositor
 - packages/contracts/src/role.ts
 
 ## Archivos modificados (8)
+
 - README.md
 - apps/api/package.json
 - apps/api/src/app.ts
@@ -42,7 +44,8 @@ Este ZIP contiene solo los archivos nuevos o modificados respecto a tu repositor
 - packages/contracts/src/index.ts
 
 ## Archivo a eliminar
-- apps/api/src/modules/auth/.gitkeep   (ya no hace falta: el módulo tiene archivos reales)
+
+- apps/api/src/modules/auth/.gitkeep (ya no hace falta: el módulo tiene archivos reales)
 
 ## Aplicar (PowerShell, desde C:\legaltech-colombia)
 

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  loginRequestSchema,
-  registerRequestSchema,
-  userSchema,
-} from "./index.js";
+import { loginRequestSchema, registerRequestSchema, userSchema } from "./index.js";
 
 describe("registerRequestSchema", () => {
   it("accepts a valid payload", () => {
@@ -37,9 +33,9 @@ describe("registerRequestSchema", () => {
 
 describe("loginRequestSchema", () => {
   it("rejects an empty password", () => {
-    expect(
-      loginRequestSchema.safeParse({ email: "ana@example.com", password: "" }).success,
-    ).toBe(false);
+    expect(loginRequestSchema.safeParse({ email: "ana@example.com", password: "" }).success).toBe(
+      false,
+    );
   });
 });
 

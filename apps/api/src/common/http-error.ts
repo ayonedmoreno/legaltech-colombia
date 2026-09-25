@@ -16,7 +16,10 @@ export class HttpError extends Error {
     statusCode: number,
     code: ApiErrorCode,
     message: string,
-    options?: { details?: Array<{ field: string; issue: string }>; headers?: Record<string, string> },
+    options?: {
+      details?: Array<{ field: string; issue: string }>;
+      headers?: Record<string, string>;
+    },
   ) {
     super(message);
     this.name = "HttpError";
