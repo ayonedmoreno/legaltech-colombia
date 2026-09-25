@@ -39,7 +39,12 @@ export function setSessionCookies(
   reply.setCookie(CSRF_COOKIE, tokens.csrfRaw, { ...BASE_ATTRIBUTES, httpOnly: false });
 }
 
+/**
+ * Clears with the same attributes the cookies were set with. Browsers reject any
+ * `__Host-` Set-Cookie that lacks `Secure`, so clearing with `Path=/` alone would be
+ * silently ignored and leave the cookie in place after logout.
+ */
 export function clearSessionCookies(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
-  reply.clearCookie(CSRF_COOKIE, { path: "/" });
+  reply.clearCookie(SESSION_COOKIE, { ...BASE_ATTRIBUTES, httpOnly: true });
+  reply.clearCookie(CSRF_COOKIE, { ...BASE_ATTRIBUTES, httpOnly: false });
 }

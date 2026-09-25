@@ -1,10 +1,14 @@
+import type { InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
 import { verifyPassword } from "../../security/password.js";
 import { buildTestApp } from "../../test-support/build-test-app.js";
 
 const ORIGIN = "http://localhost:3000";
 
-async function register(app: Awaited<ReturnType<typeof buildTestApp>>["app"], body: unknown) {
+async function register(
+  app: Awaited<ReturnType<typeof buildTestApp>>["app"],
+  body: InjectOptions["payload"],
+) {
   return app.inject({
     method: "POST",
     url: "/api/auth/register",

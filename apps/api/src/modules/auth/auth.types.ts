@@ -24,6 +24,18 @@ export interface SessionRecord {
   revokedReason: SessionRevokedReason | null;
 }
 
+/**
+ * Thrown by AuthRepository.createUser when the email is already taken at insert time — a
+ * concurrent registration won the race after this one's existence check. Keeps Prisma
+ * error codes out of the service.
+ */
+export class DuplicateEmailError extends Error {
+  constructor() {
+    super("A user with this email already exists.");
+    this.name = "DuplicateEmailError";
+  }
+}
+
 export interface CreateUserInput {
   email: string;
   passwordHash: string;

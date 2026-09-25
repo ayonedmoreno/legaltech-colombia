@@ -23,11 +23,13 @@ export interface BuildTestAppOptions {
   clock?: Clock;
   accountLoginAttemptLimit?: number;
   accountLoginWindowMs?: number;
+  /** A preconfigured (e.g. subclassed) fake repository; a fresh one is created if omitted. */
+  repository?: FakeAuthRepository;
 }
 
 /** Builds a full app wired to an in-memory FakeAuthRepository — no PostgreSQL required. */
 export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<TestApp> {
-  const repository = new FakeAuthRepository();
+  const repository = options.repository ?? new FakeAuthRepository();
   if (options.clock) repository.clock = options.clock;
 
   const authService = new AuthService({

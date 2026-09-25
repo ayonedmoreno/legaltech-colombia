@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DuplicateEmailError } from "./auth.types.js";
 import type {
   AuditLogEntry,
   AuthRepository,
@@ -35,8 +36,10 @@ export class FakeAuthRepository implements AuthRepository {
   }
 
   async createUser(input: CreateUserInput): Promise<UserRecord> {
-    if (await this.findUserByEmail(input.email)) {
-      throw new Error("unique constraint violation: users.email");
+    // Checked synchronously, with no await between check and insert, so it is atomic like
+    // the real unique index; throws what PrismaAuthRepository maps a P2002 to.
+    if ([...this.users.values()].some((user) => user.email === input.email)) {
+      throw new DuplicateEmailError();
     }
     const user: UserRecord = {
       id: randomUUID(),

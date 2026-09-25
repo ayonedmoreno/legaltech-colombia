@@ -1,3 +1,4 @@
+import type { InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
 import { buildTestApp } from "../../test-support/build-test-app.js";
 
@@ -5,7 +6,7 @@ const ORIGIN = "http://localhost:3000";
 
 type App = Awaited<ReturnType<typeof buildTestApp>>["app"];
 
-function post(app: App, url: string, payload: unknown) {
+function post(app: App, url: string, payload: InjectOptions["payload"]) {
   return app.inject({
     method: "POST",
     url,

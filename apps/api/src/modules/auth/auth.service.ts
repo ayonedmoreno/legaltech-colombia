@@ -1,9 +1,10 @@
 import { HttpError } from "../../common/http-error.js";
-import { hashPassword, verifyPassword } from "../../security/password.js";
+import { dummyPasswordHash, hashPassword, verifyPassword } from "../../security/password.js";
 import { sha256Hex } from "../../security/crypto.js";
 import { toPublicUser } from "./auth.mapper.js";
 import { createSessionForUser, csrfTokenMatchesSession, loadValidSession } from "./auth.session.js";
 import type { Clock } from "./auth.session.js";
+import { DuplicateEmailError } from "./auth.types.js";
 import type { AuthRepository, SessionRecord, UserRecord } from "./auth.types.js";
 import type { User } from "@legaltech/contracts";
 
@@ -65,29 +66,31 @@ export class AuthService {
     context: RequestContext,
   ): Promise<void> {
     const email = normalizeEmail(input.email);
+    // Hashed before the existence check, on both paths: skipping Argon2id for a duplicate
+    // email would make that response measurably faster and reveal the account exists.
+    const passwordHash = await hashPassword(input.password);
     const existing = await this.repository.findUserByEmail(email);
 
     if (existing) {
-      await this.repository.writeAuditLog({
-        actorUserId: null,
-        actorRole: null,
-        action: "auth.register",
-        entityType: "User",
-        entityId: existing.id,
-        metadata: { outcome: "duplicate" },
-        requestId: context.requestId,
-        ip: context.ip,
-        userAgent: context.userAgent,
-      });
+      await this.auditDuplicateRegistration(existing.id, context);
       return;
     }
 
-    const passwordHash = await hashPassword(input.password);
-    const user = await this.repository.createUser({
-      email,
-      passwordHash,
-      fullName: input.fullName.trim(),
-    });
+    let user: UserRecord;
+    try {
+      user = await this.repository.createUser({
+        email,
+        passwordHash,
+        fullName: input.fullName.trim(),
+      });
+    } catch (error) {
+      if (!(error instanceof DuplicateEmailError)) throw error;
+      // A concurrent registration for the same email was inserted between the check above
+      // and this insert. It is a duplicate like any other: same audit event, same 202.
+      const winner = await this.repository.findUserByEmail(email);
+      await this.auditDuplicateRegistration(winner?.id ?? null, context);
+      return;
+    }
 
     await this.repository.writeAuditLog({
       actorUserId: user.id,
@@ -96,6 +99,23 @@ export class AuthService {
       entityType: "User",
       entityId: user.id,
       metadata: { outcome: "created" },
+      requestId: context.requestId,
+      ip: context.ip,
+      userAgent: context.userAgent,
+    });
+  }
+
+  private async auditDuplicateRegistration(
+    existingUserId: string | null,
+    context: RequestContext,
+  ): Promise<void> {
+    await this.repository.writeAuditLog({
+      actorUserId: null,
+      actorRole: null,
+      action: "auth.register",
+      entityType: "User",
+      entityId: existingUserId,
+      metadata: { outcome: "duplicate" },
       requestId: context.requestId,
       ip: context.ip,
       userAgent: context.userAgent,
@@ -118,7 +138,12 @@ export class AuthService {
     }
 
     const user = await this.repository.findUserByEmail(email);
-    const passwordOk = user ? await verifyPassword(user.passwordHash, input.password) : false;
+    // Always run exactly one Argon2id verification, against a dummy hash when there is no
+    // such user, so an unknown email is not answered measurably faster than a wrong password.
+    const passwordOk = await verifyPassword(
+      user?.passwordHash ?? (await dummyPasswordHash()),
+      input.password,
+    );
 
     if (!user || !passwordOk || user.status !== "ACTIVE") {
       await this.recordLoginFailure(user, emailHash, context);
@@ -213,6 +238,15 @@ export class AuthService {
       ip: context.ip,
       userAgent: context.userAgent,
     });
+  }
+
+  /**
+   * Precomputes the dummy Argon2id hash used for logins with an unknown email. Called once
+   * while the app starts (buildApp), so the first such login costs the same as every later
+   * one instead of also paying for the hash (~20 ms) that would otherwise reveal it.
+   */
+  async warmUp(): Promise<void> {
+    await dummyPasswordHash();
   }
 
   verifyCsrf(session: SessionRecord, rawCsrfToken: string | undefined): boolean {

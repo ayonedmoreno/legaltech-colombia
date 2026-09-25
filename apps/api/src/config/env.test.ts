@@ -18,6 +18,25 @@ describe("loadEnv", () => {
     expect(loadEnv({ ...valid, API_PORT: "5000" }).API_PORT).toBe(5000);
   });
 
+  it.each(["http://localhost:3000", "https://example.com"])(
+    "accepts the bare origin %s for APP_ORIGIN, unchanged",
+    (origin) => {
+      expect(loadEnv({ ...valid, APP_ORIGIN: origin }).APP_ORIGIN).toBe(origin);
+    },
+  );
+
+  it.each([
+    "http://localhost:3000/",
+    "https://example.com/",
+    "https://example.com/app",
+    "https://example.com?x=1",
+    "https://example.com#top",
+  ])("rejects %s for APP_ORIGIN at startup instead of normalizing it", (origin) => {
+    expect(() => loadEnv({ ...valid, APP_ORIGIN: origin })).toThrow(
+      /APP_ORIGIN: must be a bare origin \(scheme:\/\/host\[:port\]\)/,
+    );
+  });
+
   it("fails on missing required variables without leaking values", () => {
     expect(() => loadEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrow(/APP_ORIGIN/);
     try {

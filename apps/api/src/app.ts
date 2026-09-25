@@ -44,6 +44,8 @@ export async function buildApp({ env, health, authService }: AppOptions): Promis
   // a second secret to manage without a corresponding security gain.
   await app.register(cookie);
   registerErrorHandler(app);
+  // Before any route can serve a request: see AuthService.warmUp.
+  await authService.warmUp();
   await app.register(healthRoutes, { prefix: "/api/health", checkDatabase: health.checkDatabase });
   await app.register(authRoutes, { prefix: "/api/auth", authService, appOrigin: env.APP_ORIGIN });
 

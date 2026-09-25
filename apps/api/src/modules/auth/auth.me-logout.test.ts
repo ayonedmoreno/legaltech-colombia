@@ -141,6 +141,35 @@ describe("POST /api/auth/logout", () => {
     await app.close();
   });
 
+  it("clears both __Host- cookies with Secure and Path=/, so browsers accept the deletion", async () => {
+    const { app, sessionRaw, csrfRaw } = await loggedInApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: {
+        origin: ORIGIN,
+        "x-csrf-token": csrfRaw,
+        cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }),
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+    for (const [name, httpOnly] of [
+      ["__Host-session", true],
+      ["__Host-csrf", false],
+    ] as const) {
+      const cleared = findSetCookie(response.headers["set-cookie"], name);
+      expect(cleared?.value).toBe("");
+      const attributes = cleared!.attributes.map((a) => a.toLowerCase());
+      expect(attributes).toEqual(
+        expect.arrayContaining(["secure", "samesite=lax", "path=/", "max-age=0"]),
+      );
+      expect(attributes.includes("httponly")).toBe(httpOnly);
+      expect(attributes.some((a) => a.startsWith("domain="))).toBe(false);
+    }
+    await app.close();
+  });
+
   it("is safe to call with no session at all", async () => {
     const { app } = await loggedInApp();
     const response = await app.inject({ method: "POST", url: "/api/auth/logout", headers: { origin: ORIGIN } });
