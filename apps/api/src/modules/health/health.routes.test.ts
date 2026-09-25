@@ -1,21 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildApp } from "../../app.js";
-import { loadEnv } from "../../config/env.js";
-
-const env = loadEnv({
-  NODE_ENV: "test",
-  LOG_LEVEL: "silent",
-  APP_ORIGIN: "http://localhost:3000",
-  DATABASE_URL: "postgresql://unused",
-});
-
-async function appWith(databaseUp: boolean) {
-  return buildApp({ env, health: { checkDatabase: async () => databaseUp } });
-}
+import { buildTestApp } from "../../test-support/build-test-app.js";
 
 describe("health routes", () => {
   it("GET /api/health/live returns ok", async () => {
-    const app = await appWith(true);
+    const { app } = await buildTestApp({ databaseUp: true });
     const response = await app.inject({ method: "GET", url: "/api/health/live" });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: "ok" });
@@ -23,11 +11,11 @@ describe("health routes", () => {
   });
 
   it("GET /api/health/ready reflects database availability", async () => {
-    const up = await appWith(true);
+    const { app: up } = await buildTestApp({ databaseUp: true });
     expect((await up.inject({ method: "GET", url: "/api/health/ready" })).statusCode).toBe(200);
     await up.close();
 
-    const down = await appWith(false);
+    const { app: down } = await buildTestApp({ databaseUp: false });
     const response = await down.inject({ method: "GET", url: "/api/health/ready" });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ status: "unavailable" });
@@ -37,7 +25,7 @@ describe("health routes", () => {
 
 describe("base security configuration", () => {
   it("sends security headers", async () => {
-    const app = await appWith(true);
+    const { app } = await buildTestApp();
     const response = await app.inject({ method: "GET", url: "/api/health/live" });
     expect(response.headers["x-content-type-options"]).toBe("nosniff");
     expect(response.headers["x-powered-by"]).toBeUndefined();
@@ -45,7 +33,7 @@ describe("base security configuration", () => {
   });
 
   it("returns the error contract with a request id for unknown routes", async () => {
-    const app = await appWith(true);
+    const { app } = await buildTestApp();
     const response = await app.inject({
       method: "GET",
       url: "/api/does-not-exist",
@@ -65,7 +53,7 @@ describe("base security configuration", () => {
   });
 
   it("replaces a malformed inbound request id", async () => {
-    const app = await appWith(true);
+    const { app } = await buildTestApp();
     const response = await app.inject({
       method: "GET",
       url: "/api/health/live",
