@@ -1,15 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { cookieHeader, findSetCookie } from "../../test-support/cookies.js";
 import { buildTestApp } from "../../test-support/build-test-app.js";
-import { loginIpLimiter, registerIpLimiter } from "./auth.routes.js";
 
 const ORIGIN = "http://localhost:3000";
 const PASSWORD = "correct horse battery";
 
-beforeEach(() => {
-  loginIpLimiter.reset();
-  registerIpLimiter.reset();
-});
 
 describe("auth audit trail", () => {
   it("uses exactly the approved event names and never records secrets", async () => {

@@ -1,15 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { findSetCookie } from "../../test-support/cookies.js";
 import { buildTestApp } from "../../test-support/build-test-app.js";
-import { loginIpLimiter, registerIpLimiter } from "./auth.routes.js";
 
 const ORIGIN = "http://localhost:3000";
 const CREDENTIALS = { email: "ana@example.com", password: "correct horse battery" };
 
-beforeEach(() => {
-  loginIpLimiter.reset();
-  registerIpLimiter.reset();
-});
 
 async function login(app: Awaited<ReturnType<typeof buildTestApp>>["app"], body: unknown) {
   return app.inject({
@@ -82,8 +77,16 @@ describe("POST /api/auth/login", () => {
     const wrongPassword = await login(app, { ...CREDENTIALS, password: "wrong password entirely" });
     const noSuchUser = await login(app, { email: "nobody@example.com", password: "whatever12345" });
 
+    // Two distinct HTTP requests legitimately get two distinct request ids (app.ts assigns a
+    // fresh one per request); comparing the full JSON bodies would fail on that field alone
+    // without saying anything about authentication security. What must be indistinguishable
+    // is the authentication contract itself: status, error code, message and details.
+    const wrongBody = wrongPassword.json();
+    const noSuchBody = noSuchUser.json();
     expect(noSuchUser.statusCode).toBe(wrongPassword.statusCode);
-    expect(noSuchUser.json()).toEqual(wrongPassword.json());
+    expect(noSuchBody.error.code).toBe(wrongBody.error.code);
+    expect(noSuchBody.error.message).toBe(wrongBody.error.message);
+    expect(noSuchBody.error.details).toEqual(wrongBody.error.details);
     await app.close();
   });
 

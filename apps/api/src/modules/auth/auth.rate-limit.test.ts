@@ -1,13 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildTestApp } from "../../test-support/build-test-app.js";
-import { loginIpLimiter, registerIpLimiter } from "./auth.routes.js";
 
 const ORIGIN = "http://localhost:3000";
-
-beforeEach(() => {
-  loginIpLimiter.reset();
-  registerIpLimiter.reset();
-});
 
 type App = Awaited<ReturnType<typeof buildTestApp>>["app"];
 
@@ -82,8 +76,11 @@ describe("per-account throttling", () => {
     await attempt();
     expect((await attempt()).statusCode).toBe(429);
 
+    // Each test's app has its own rate limiters (created inside the `authRoutes` plugin,
+    // per buildApp/buildTestApp call), so the per-IP login limiter here is untouched by any
+    // other test in this file — only the per-account throttle above was blocking further
+    // attempts, and advancing the clock past its window is enough to lift it.
     now = new Date(now.getTime() + 61_000);
-    loginIpLimiter.reset();
     expect((await attempt()).statusCode).toBe(401);
     await app.close();
   });

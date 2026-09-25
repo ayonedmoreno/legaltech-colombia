@@ -20,13 +20,21 @@ export interface AuthRouteDeps {
   appOrigin: string;
 }
 
-// Per-IP, in-memory, single-process limits (SECURITY_SPEC.md §7 known limitation).
-// Exported so tests can reset them between cases instead of sharing state across the file.
-export const registerIpLimiter = new FixedWindowRateLimiter(5, 10 * 60 * 1000);
-export const loginIpLimiter = new FixedWindowRateLimiter(10, 10 * 60 * 1000);
-
 function requestContext(request: FastifyRequest): RequestContext {
   return { ip: request.ip, userAgent: request.headers["user-agent"] ?? null, requestId: request.id };
+}
+
+/**
+ * The `X-CSRF-Token` header — never the CSRF cookie itself. In the double-submit pattern
+ * (ADR-002 / API_SPEC.md) the cookie is not the credential being checked: it travels
+ * automatically with every request, cross-site ones included, exactly like the session
+ * cookie, so comparing it against the session would always "match" and provide no
+ * protection at all. The header is the credential, because only same-origin JavaScript can
+ * read the CSRF cookie's value and place it there; a cross-site request cannot forge it.
+ */
+function readCsrfHeader(request: FastifyRequest): string | undefined {
+  const header = request.headers["x-csrf-token"];
+  return Array.isArray(header) ? header[0] : header;
 }
 
 function validationError(error: ZodError): HttpError {
@@ -53,6 +61,15 @@ function enforceIpLimit(limiter: FixedWindowRateLimiter, request: FastifyRequest
 }
 
 export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (app, { authService, appOrigin }) => {
+  // Per-IP, in-memory limits (SECURITY_SPEC.md §7 known limitation: not shared across
+  // process instances). Created here, inside the plugin, rather than at module scope: each
+  // Fastify instance — including a fresh one per test via buildTestApp — gets its own
+  // isolated counters. A module-level singleton would leak request counts between
+  // independent app instances (and, in tests, between unrelated test cases), which is
+  // exactly the class of bug a shared global would invite here.
+  const registerIpLimiter = new FixedWindowRateLimiter(5, 10 * 60 * 1000);
+  const loginIpLimiter = new FixedWindowRateLimiter(10, 10 * 60 * 1000);
+
   app.get("/csrf", async (request, reply) => {
     const sessionRaw = readSessionToken(request);
     const current = await authService.currentUser(sessionRaw);
@@ -132,7 +149,7 @@ async function requireCsrfIfSessionValid(
   if (!current) return;
 
   requireSameOrigin(request, appOrigin);
-  if (!authService.verifyCsrf(current.session, readCsrfToken(request))) {
+  if (!authService.verifyCsrf(current.session, readCsrfHeader(request))) {
     throw new HttpError(403, "CSRF_INVALID", "Token CSRF inválido o ausente.");
   }
 }
