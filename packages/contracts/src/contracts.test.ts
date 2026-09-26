@@ -16,6 +16,17 @@ describe("contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts SERVICE_UNAVAILABLE (503 when the login attempt cannot be evaluated, ADR-002 D3)", () => {
+    const result = apiErrorSchema.safeParse({
+      error: {
+        code: "SERVICE_UNAVAILABLE",
+        message: "Servicio no disponible temporalmente. Inténtalo más tarde.",
+        requestId: "req-1",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("validates the health response", () => {
     expect(healthResponseSchema.safeParse({ status: "ok" }).success).toBe(true);
     expect(healthResponseSchema.safeParse({ status: "down" }).success).toBe(false);

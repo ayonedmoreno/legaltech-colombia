@@ -10,6 +10,7 @@ export const apiErrorCodeSchema = z.enum([
   "FORBIDDEN",
   "NOT_FOUND",
   "RATE_LIMITED",
+  "SERVICE_UNAVAILABLE",
   "INTERNAL_ERROR",
 ]);
 export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
