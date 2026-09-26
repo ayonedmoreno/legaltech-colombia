@@ -59,6 +59,8 @@ Autenticación propia, integrada en la API, con **sesiones opacas** guardadas en
 **MFA**
 - TOTP con códigos de recuperación para ADMIN y SUPER_ADMIN.
 - **Barrera de producción:** en `NODE_ENV=production`, ningún ADMIN o SUPER_ADMIN puede iniciar sesión hasta que MFA esté implementado y enrolado (la comprobación falla cerrada). MFA no forma parte del Sprint 1; se planifica antes de habilitar cualquier cuenta administrativa en producción.
+- `NODE_ENV` es obligatorio y no tiene valor por defecto; si falta o no es `development`, `test` ni `production`, la API no arranca, de modo que la barrera no puede desactivarse por omisión.
+- *(Actualizado 2026-09-26, decisión D1.)* La barrera se aplica al inicio de sesión. Esta decisión **no** resuelve el tratamiento de las sesiones ya existentes (por ejemplo, las creadas con una configuración incorrecta): queda pendiente como decisión separada de gestión de sesiones.
 
 **Alta de cuentas y roles**
 - El registro público solo crea usuarios con rol `USER`.

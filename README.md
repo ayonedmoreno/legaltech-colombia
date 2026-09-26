@@ -102,9 +102,9 @@ Dependency rules (ADR-001) are enforced by lint: only `packages/database` import
 - Session idle/absolute durations are set per role in `auth.session.ts` (ADR-002 durations for `USER`;
   shorter, still-to-confirm durations for internal roles).
 - The MFA barrier for `ADMIN`/`SUPER_ADMIN` in production (ADR-002) is wired into login now, even
-  though MFA itself is not implemented: it blocks those roles when `NODE_ENV=production`. Known gap:
-  `NODE_ENV` defaults to `development` when unset, so a production process started without it would
-  not apply the barrier. Making it fail closed is a pending decision.
+  though MFA itself is not implemented: it blocks those roles when `NODE_ENV=production`. `NODE_ENV`
+  is required (no default): the API refuses to start without it, so the barrier cannot be switched
+  off by omission (ADR-002, D1).
 - Per-IP limits are in-memory (`FixedWindowRateLimiter`), a known, documented limitation
   (SECURITY_SPEC.md §7). Per-account login throttling is derived from failed-login events in
   `audit_logs` (ADR-002), so it is stored in PostgreSQL.

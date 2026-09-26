@@ -19,6 +19,8 @@ Este documento fija la línea base de seguridad. Cada fase la amplía en el mism
 
 Ver ADR-002. Resumen: sesiones opacas en cookie `httpOnly`, Argon2id, revocación, expiración y rotación, CSRF, verificación de email, recuperación segura de contraseña, rate limiting y MFA obligatorio para ADMIN y SUPER_ADMIN antes de producción.
 
+La API exige `NODE_ENV` explícito (`development`, `test` o `production`); sin él no arranca, para que la barrera MFA de producción no pueda desactivarse por omisión (ADR-002).
+
 ## 3. Autorización
 
 Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request, protección explícita contra IDOR (404 para recursos ajenos), policies puras y tests de acceso cruzado.

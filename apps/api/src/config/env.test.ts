@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadEnv } from "./env.js";
 
 const valid = {
+  NODE_ENV: "development",
   APP_ORIGIN: "http://localhost:3000",
   DATABASE_URL: "postgresql://user:secret-value@localhost:5432/db",
 };
@@ -11,8 +12,45 @@ describe("loadEnv", () => {
     const env = loadEnv(valid);
     expect(env.API_PORT).toBe(4000);
     expect(env.API_HOST).toBe("127.0.0.1");
-    expect(env.NODE_ENV).toBe("development");
   });
+
+  it.each(["development", "test", "production"])("accepts NODE_ENV=%s, unchanged", (nodeEnv) => {
+    expect(loadEnv({ ...valid, NODE_ENV: nodeEnv }).NODE_ENV).toBe(nodeEnv);
+  });
+
+  // ADR-002 (D1): no default. A missing NODE_ENV must fail at startup instead of silently
+  // meaning development, which would switch off the production MFA barrier.
+  it("refuses to start without NODE_ENV, naming only NODE_ENV and leaking no values", () => {
+    const withoutNodeEnv = { APP_ORIGIN: valid.APP_ORIGIN, DATABASE_URL: valid.DATABASE_URL };
+    let message = "";
+    expect(() => {
+      try {
+        loadEnv(withoutNodeEnv);
+      } catch (error) {
+        message = String(error);
+        throw error;
+      }
+    }).toThrow(/^Invalid environment configuration: NODE_ENV: [^;]+$/);
+    expect(message).not.toContain("secret-value");
+    expect(message).not.toContain("localhost");
+  });
+
+  it.each(["", "staging", "Production", " production", "prod"])(
+    "refuses to start with NODE_ENV=%j, naming only NODE_ENV and leaking no values",
+    (nodeEnv) => {
+      let message = "";
+      expect(() => {
+        try {
+          loadEnv({ ...valid, NODE_ENV: nodeEnv });
+        } catch (error) {
+          message = String(error);
+          throw error;
+        }
+      }).toThrow(/^Invalid environment configuration: NODE_ENV: [^;]+$/);
+      expect(message).not.toContain("secret-value");
+      expect(message).not.toContain("localhost");
+    },
+  );
 
   it("coerces the port to a number", () => {
     expect(loadEnv({ ...valid, API_PORT: "5000" }).API_PORT).toBe(5000);
