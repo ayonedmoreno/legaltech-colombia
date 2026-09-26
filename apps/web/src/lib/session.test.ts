@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { getCurrentUser } from "./session";
 
 const API = "http://127.0.0.1:4000";
-const TOKEN = "YPN-wiQKfpQwNmzR6cWl8cdyw2b5IJvVBcVlV4vme-8";
+// Synthetic, well-formed session token: base64url alphabet (including "-" and "_") and the
+// 43-character length of the API's 256-bit tokens. Never a real token.
+const TOKEN = "session-token_" + "x".repeat(29);
 const USER = { id: "u1", email: "ana@example.com", fullName: "Ana", role: "USER" };
 
 describe("getCurrentUser (server-side session check)", () => {
