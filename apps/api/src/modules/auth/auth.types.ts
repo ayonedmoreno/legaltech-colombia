@@ -74,8 +74,8 @@ export interface AuditLogEntry {
  * Persistence boundary for the auth module. A Prisma-backed implementation
  * (auth.repository.ts) is used at runtime; an in-memory fake (auth.repository.fake.ts)
  * is used in tests, so the test suite does not need a real PostgreSQL instance
- * (full Prisma-backed integration tests, with testcontainers, are a follow-up — see
- * the Sprint 1B report).
+ * (the Prisma implementation is also tested against real PostgreSQL in
+ * auth.repository.integration.test.ts, which CI runs after the migrations).
  */
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<UserRecord | null>;

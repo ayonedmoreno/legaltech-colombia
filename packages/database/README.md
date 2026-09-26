@@ -9,5 +9,11 @@ Prisma schema, migrations and database client. Only this package may import `@pr
   - `20260924120100_identity_constraints`: manual SQL (email CHECK, append-only trigger on
     `audit_logs`, partial index, REVOKE for the application role).
 - Any change to `schema.prisma` must come with a migration and an update to `docs/DATABASE_SPEC.md`.
+- The Prisma Client is generated only by the `generate` script, as its own Turborepo task that `build`,
+  `typecheck` and `test` depend on (`turbo.json`), so it runs once per `pnpm build`/`typecheck`/`test`/`dev`
+  and before anything reads the client. `prisma generate` rewrites the shared client in place, so
+  running it from several tasks at once let a concurrent `tsc` read a half-written client. When
+  calling this package's scripts directly (outside Turborepo), run the generator first:
+  `pnpm --filter @legaltech/database generate`.
 - `DATABASE_URL` (application role) is used at runtime; `DATABASE_MIGRATION_URL` (owner role) is used
   by the Prisma CLI.

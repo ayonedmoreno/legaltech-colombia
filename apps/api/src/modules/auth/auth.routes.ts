@@ -131,11 +131,7 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
   });
 
   app.get("/me", async (request, reply) => {
-    const current = await authService.currentUser(readSessionToken(request));
-    if (!current) {
-      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
-    }
-    const body: MeResponse = { user: current.user };
+    const body: MeResponse = { user: await authService.readOwnProfile(readSessionToken(request)) };
     return reply.send(body);
   });
 
@@ -148,9 +144,9 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
 };
 
 /**
- * Logout must succeed even for an already-invalid session (section 9 of the Sprint
- * brief), so CSRF is only enforced when there is something to protect: a currently valid
- * session. With no valid session, this is a no-op and the route proceeds to clear cookies.
+ * Logout must succeed even for an already-invalid session (API_SPEC.md, `POST /api/auth/logout`),
+ * so CSRF is only enforced when there is something to protect: a currently valid session. With no
+ * valid session, this is a no-op and the route proceeds to clear cookies.
  */
 async function requireCsrfIfSessionValid(
   request: FastifyRequest,

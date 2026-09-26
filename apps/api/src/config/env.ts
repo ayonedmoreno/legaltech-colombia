@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { z } from "zod";
 
 function isBareOrigin(value: string): boolean {
@@ -6,6 +7,16 @@ function isBareOrigin(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** A single IP address or a CIDR range (`10.0.0.0/8`, `fd00::/8`); no presets or wildcards. */
+function isIpOrCidr(entry: string): boolean {
+  const [address, prefix, ...rest] = entry.split("/");
+  const family = isIP(address ?? "");
+  if (family === 0 || rest.length > 0) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  return Number(prefix) <= (family === 4 ? 32 : 128);
 }
 
 const envSchema = z.object({
@@ -21,6 +32,23 @@ const envSchema = z.object({
       "must be a bare origin (scheme://host[:port]) with no trailing slash, path, query or fragment",
   }),
   DATABASE_URL: z.string().min(1),
+  // Addresses of reverse proxies whose X-Forwarded-For the API may trust (comma-separated IPs
+  // or CIDRs). Empty by default: request.ip is then always the TCP peer. The Next.js rewrite
+  // (ADR-002) neither adds the client IP nor strips a client-sent X-Forwarded-For, so trusting
+  // it alone would let any client pick its own IP. Only set this once an edge proxy that sets
+  // X-Forwarded-For sits in front of the web app (deployment topology, P3).
+  API_TRUST_PROXY: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    )
+    .refine((entries) => entries.every(isIpOrCidr), {
+      message: "must be a comma-separated list of IP addresses or CIDR ranges",
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;

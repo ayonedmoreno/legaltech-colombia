@@ -25,6 +25,8 @@ export interface BuildTestAppOptions {
   accountLoginWindowMs?: number;
   /** A preconfigured (e.g. subclassed) fake repository; a fresh one is created if omitted. */
   repository?: FakeAuthRepository;
+  /** Trusted proxy addresses (API_TRUST_PROXY); none by default, as in the real default. */
+  trustProxy?: string[];
 }
 
 /** Builds a full app wired to an in-memory FakeAuthRepository — no PostgreSQL required. */
@@ -41,7 +43,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
   });
 
   const app = await buildApp({
-    env: TEST_ENV,
+    env: { ...TEST_ENV, API_TRUST_PROXY: options.trustProxy ?? TEST_ENV.API_TRUST_PROXY },
     health: { checkDatabase: async () => options.databaseUp ?? true },
     authService,
   });

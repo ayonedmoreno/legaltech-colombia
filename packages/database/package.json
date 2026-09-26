@@ -18,8 +18,8 @@
   ],
   "scripts": {
     "generate": "prisma generate",
-    "build": "prisma generate && tsc -p tsconfig.build.json",
-    "typecheck": "prisma generate && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "validate": "dotenv -e ../../.env -- prisma validate",
     "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",

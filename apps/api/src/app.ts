@@ -32,6 +32,9 @@ export async function buildApp({ env, health, authService }: AppOptions): Promis
         ? inbound
         : randomUUID();
     },
+    // request.ip feeds the per-IP rate limits and the audit/session IP. X-Forwarded-For is
+    // honoured only from the explicitly listed proxies; with none listed, it is ignored.
+    trustProxy: env.API_TRUST_PROXY.length > 0 ? env.API_TRUST_PROXY : false,
   });
 
   app.addHook("onSend", async (request, reply) => {

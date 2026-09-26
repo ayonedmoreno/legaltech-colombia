@@ -28,7 +28,8 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 - TLS en todos los entornos no locales; HSTS en producción.
 - Cookies `Secure` y `httpOnly` (ADR-002).
 - Cabeceras de seguridad con `helmet` en la API y equivalentes en Next.js (CSP, `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors`).
-- CORS con lista explícita de orígenes; sin comodines.
+  - CSP de Next.js con nonce por petición (`apps/web/src/middleware.ts`): solo se ejecutan scripts con el nonce (`'strict-dynamic'`), sin `'unsafe-inline'` para scripts; `object-src 'none'`, `base-uri`/`form-action`/`connect-src 'self'`, `frame-ancestors 'none'` y `upgrade-insecure-requests` en producción. Las páginas se renderizan dinámicamente para que cada una lleve su nonce. HSTS lo pone el proxy que termina TLS.
+- CORS con lista explícita de orígenes; sin comodines. Con el origen único de ADR-002 (Next.js reenvía `/api/*` a la API) no se habilita CORS.
 
 ## 5. Validación de entrada y salida
 
@@ -50,6 +51,7 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 - Límites por IP y por cuenta en los endpoints de autenticación (ADR-002).
 - Cuotas por usuario para operaciones costosas (OCR, IA) cuando existan.
 - Limitación conocida: el límite por IP en memoria no se comparte entre instancias; se resolverá antes de escalar horizontalmente.
+- **IP del cliente y proxies.** La IP (límite por IP, auditoría, sesiones) es siempre la del par TCP, salvo que el par figure en `API_TRUST_PROXY` (lista explícita de IPs/CIDR, vacía por defecto; no se aceptan comodines ni presets). El reenvío `/api/*` de Next.js no añade la IP del cliente ni elimina un `X-Forwarded-For` enviado por el cliente, así que confiar en él permitiría falsificar la IP. Mientras no haya un proxy de borde que fije `X-Forwarded-For` (topología de despliegue, decisión P3), detrás del proxy web todas las peticiones comparten la IP del servidor web: el límite por IP se vuelve global (falla cerrado; no se puede eludir) y la auditoría registra esa IP. Consecuencia: un solo cliente puede agotar el límite para todos (5 registros o 10 logins cada 10 minutos en todo el sitio), una denegación de servicio del registro y del login; no es aceptable para un despliegue público hasta resolverlo (barrera antes de producción, §12).
 
 ## 8. Auditoría
 

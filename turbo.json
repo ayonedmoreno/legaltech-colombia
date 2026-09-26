@@ -1,24 +1,29 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["API_INTERNAL_URL"],
   "globalPassThroughEnv": [
     "NODE_ENV",
     "API_HOST",
     "API_PORT",
     "LOG_LEVEL",
     "APP_ORIGIN",
+    "API_TRUST_PROXY",
     "DATABASE_URL",
     "DATABASE_MIGRATION_URL"
   ],
   "tasks": {
+    "generate": {
+      "cache": false
+    },
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "generate"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "generate"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "generate"]
     },
     "dev": {
       "dependsOn": ["^build"],

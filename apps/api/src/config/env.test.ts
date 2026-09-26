@@ -37,6 +37,26 @@ describe("loadEnv", () => {
     );
   });
 
+  it("trusts no proxy unless API_TRUST_PROXY is set", () => {
+    expect(loadEnv(valid).API_TRUST_PROXY).toEqual([]);
+    expect(loadEnv({ ...valid, API_TRUST_PROXY: "" }).API_TRUST_PROXY).toEqual([]);
+  });
+
+  it("parses API_TRUST_PROXY as a list of IPs and CIDR ranges", () => {
+    expect(
+      loadEnv({ ...valid, API_TRUST_PROXY: " 10.0.0.5 , 10.1.0.0/16,fd00::/8 " }).API_TRUST_PROXY,
+    ).toEqual(["10.0.0.5", "10.1.0.0/16", "fd00::/8"]);
+  });
+
+  it.each(["true", "*", "loopback", "10.0.0.0/33", "10.0.0.0/abc", "10.0.0.0/8/1", "proxy.local"])(
+    "rejects %s in API_TRUST_PROXY (only explicit addresses are trusted)",
+    (value) => {
+      expect(() => loadEnv({ ...valid, API_TRUST_PROXY: value })).toThrow(
+        /API_TRUST_PROXY: must be a comma-separated list of IP addresses or CIDR ranges/,
+      );
+    },
+  );
+
   it("fails on missing required variables without leaking values", () => {
     expect(() => loadEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrow(/APP_ORIGIN/);
     try {

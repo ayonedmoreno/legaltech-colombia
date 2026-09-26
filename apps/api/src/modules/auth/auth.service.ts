@@ -1,7 +1,9 @@
 import { HttpError } from "../../common/http-error.js";
+import type { Actor } from "../../common/policy.js";
 import { dummyPasswordHash, hashPassword, verifyPassword } from "../../security/password.js";
 import { sha256Hex } from "../../security/crypto.js";
 import { toPublicUser } from "./auth.mapper.js";
+import { can } from "./auth.policy.js";
 import { createSessionForUser, csrfTokenMatchesSession, loadValidSession } from "./auth.session.js";
 import type { Clock } from "./auth.session.js";
 import { DuplicateEmailError } from "./auth.types.js";
@@ -33,6 +35,8 @@ export interface LoginResult {
 export interface CurrentUserResult {
   user: User;
   session: SessionRecord;
+  /** The same user as seen by policies (ADR-003). */
+  actor: Actor;
 }
 
 /** Lowercased, trimmed form stored in the database (matches the `users_email_normalized_chk` constraint). */
@@ -58,8 +62,8 @@ export class AuthService {
   /**
    * Creates a user with role USER. Always succeeds from the caller's point of view, even
    * when the email is already registered: this avoids account enumeration through the
-   * registration endpoint (API_SPEC.md). Email verification is a later slice (PROJECT_SPEC.md
-   * s.17 of this Sprint's brief); no verification token is issued yet.
+   * registration endpoint (API_SPEC.md). Email verification is designed but not implemented
+   * yet (API_SPEC.md, "Diseñados, no implementados"); no verification token is issued.
    */
   async register(
     input: { email: string; password: string; fullName: string },
@@ -213,13 +217,33 @@ export class AuthService {
     const user = await this.findUserById(loaded.session.userId);
     if (!user || user.status !== "ACTIVE") return null;
 
-    return { user: toPublicUser(user), session: loaded.session };
+    return {
+      user: toPublicUser(user),
+      session: loaded.session,
+      actor: { id: user.id, role: user.role, status: user.status },
+    };
+  }
+
+  /**
+   * GET /api/auth/me: the current user's own profile, authorized by the auth policy's
+   * `user:read` (ADR-003). A denied read answers 404, never 403, so it does not confirm that
+   * the resource exists.
+   */
+  async readOwnProfile(sessionRawToken: string | undefined): Promise<User> {
+    const current = await this.currentUser(sessionRawToken);
+    if (!current) {
+      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
+    }
+    if (!can(current.actor, "user:read", { id: current.user.id }).allowed) {
+      throw new HttpError(404, "NOT_FOUND", "Recurso no encontrado.");
+    }
+    return current.user;
   }
 
   /**
    * Always succeeds from the caller's point of view, even for a missing, already-revoked
-   * or expired session (section 9 of this Sprint's brief: "debe ser seguro incluso cuando
-   * la sesión ya no sea válida").
+   * or expired session (API_SPEC.md, `POST /api/auth/logout`: 204 also when the session is
+   * no longer valid).
    */
   async logout(sessionRawToken: string | undefined, context: RequestContext): Promise<void> {
     const loaded = await loadValidSession(this.repository, sessionRawToken, this.clock);

@@ -38,6 +38,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.login.success` | Login correcto | Usuario | — |
 | `auth.login.failed` | Credenciales inválidas, cuenta suspendida o rol bloqueado por la barrera MFA | Usuario si existe; sin actor si el correo no existe | `emailHash` (SHA-256 del correo normalizado); `reason: mfa_required_production` si aplica |
 | `auth.logout` | Logout con una sesión válida | Usuario | — |
+| `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
 
@@ -118,10 +119,11 @@ Revoca la sesión actual.
 
 ### `GET /api/auth/me`
 
-Devuelve el usuario autenticado.
+Devuelve el usuario autenticado. Autorizado por la policy del módulo de autenticación (`user:read` sobre el propio usuario, ADR-003).
 
 - **200:** `{ "user": User }`
 - **401:** `UNAUTHENTICATED` — sin sesión, sesión inválida/expirada, o usuario suspendido.
+- **404:** `NOT_FOUND` si la policy denegara la lectura (ADR-003: nunca 403, para no confirmar la existencia del recurso). Con la matriz del Sprint 1 no ocurre para el propio usuario.
 
 ### Diseñados, no implementados en Sprint 1B
 
@@ -205,7 +207,7 @@ Nunca se devuelven `passwordHash`, hashes de tokens ni tokens en claro.
 
 ## Rate limits (Sprint 1B, valores iniciales)
 
-Implementados como límites en memoria, por proceso (SECURITY_SPEC.md — no compartidos entre instancias; migrar a un almacén compartido antes de escalar horizontalmente, sin introducir Redis sin un ADR).
+Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compartidos entre instancias; migrar a un almacén compartido antes de escalar horizontalmente, sin introducir Redis sin un ADR). El límite por cuenta se deriva de los eventos `auth.login.failed` de `audit_logs` (ADR-002), así que se guarda en PostgreSQL. La IP es la del par TCP salvo proxies listados en `API_TRUST_PROXY`; detrás del proxy web de ADR-002, y hasta que exista un proxy de borde, el límite por IP es global (SECURITY_SPEC.md §7).
 
 | Endpoint | Por IP | Por cuenta |
 |---|---|---|

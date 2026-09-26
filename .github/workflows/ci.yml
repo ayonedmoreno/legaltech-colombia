@@ -103,3 +103,13 @@ jobs:
           if psql "$OWNER_PSQL_URL" -v ON_ERROR_STOP=1 -c "UPDATE audit_logs SET action = 'x';"; then
             echo "UPDATE on audit_logs must fail for the owner role (trigger)"; exit 1
           fi
+
+      # PrismaAuthRepository against the migrated database, as the application role (runtime
+      # privileges). The tests skip themselves without INTEGRATION_DATABASE_URL, so fail here
+      # rather than let an empty value pass silently.
+      - name: Integration tests (PostgreSQL)
+        env:
+          INTEGRATION_DATABASE_URL: ${{ env.APP_PSQL_URL }}
+        run: |
+          test -n "$INTEGRATION_DATABASE_URL" || { echo "INTEGRATION_DATABASE_URL is empty"; exit 1; }
+          pnpm --filter @legaltech/api run test:integration
