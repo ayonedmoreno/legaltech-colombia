@@ -19,6 +19,37 @@ function isIpOrCidr(entry: string): boolean {
   return Number(prefix) <= (family === 4 ? 32 : 128);
 }
 
+/** The eight 16-bit groups of a valid IPv6 address, with `::` and an embedded IPv4 expanded. */
+function ipv6Groups(address: string): number[] {
+  let text = address.split("%")[0] ?? "";
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number) as [number, number, number, number];
+    text = `${text.slice(0, dotted.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const parse = (part: string | undefined) =>
+    part ? part.split(":").map((group) => parseInt(group, 16)) : [];
+  const [head, tail] = text.split("::");
+  if (tail === undefined) return parse(head);
+  const before = parse(head);
+  const after = parse(tail);
+  return [...before, ...new Array<number>(8 - before.length - after.length).fill(0), ...after];
+}
+
+/**
+ * An entry proxy-addr would read as "trust every address" (ADR-002, D2-G): any `/0` range, or
+ * an IPv4-mapped IPv6 range with prefix 96 (`::ffff:0:0/96`), which proxy-addr applies to every
+ * IPv4 peer. Only called on entries that already passed `isIpOrCidr`.
+ */
+function isGlobalTrust(entry: string): boolean {
+  const [address = "", prefix] = entry.split("/");
+  if (prefix === undefined) return false;
+  if (Number(prefix) === 0) return true;
+  if (Number(prefix) !== 96 || isIP(address) !== 6) return false;
+  const groups = ipv6Groups(address);
+  return groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff;
+}
+
 const envSchema = z.object({
   // Required, no default (ADR-002, D1): a missing NODE_ENV must not silently mean development,
   // which would switch off the production MFA barrier.
@@ -50,6 +81,9 @@ const envSchema = z.object({
     )
     .refine((entries) => entries.every(isIpOrCidr), {
       message: "must be a comma-separated list of IP addresses or CIDR ranges",
+    })
+    .refine((entries) => !entries.some((entry) => isIpOrCidr(entry) && isGlobalTrust(entry)), {
+      message: "must not trust every address (a /0 range or the IPv4-mapped ::ffff:0:0/96 range)",
     }),
 });
 

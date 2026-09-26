@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type {
   CsrfResponse,
   LoginResponse,
@@ -25,9 +26,19 @@ export interface AuthRouteDeps {
   appOrigin: string;
 }
 
+/**
+ * The client address used for the per-IP limits and recorded in audit logs and sessions
+ * (ADR-002, D2-G). Behind a proxy listed in API_TRUST_PROXY, `request.ip` comes from
+ * X-Forwarded-For and can be any text a client sent; anything that is not an IP address falls
+ * back to the TCP peer instead of being rejected.
+ */
+function clientIp(request: FastifyRequest): string {
+  return isIP(request.ip) !== 0 ? request.ip : (request.socket.remoteAddress ?? "");
+}
+
 function requestContext(request: FastifyRequest): RequestContext {
   return {
-    ip: request.ip,
+    ip: clientIp(request),
     userAgent: request.headers["user-agent"] ?? null,
     requestId: request.id,
   };
@@ -61,7 +72,7 @@ function requireSameOrigin(request: FastifyRequest, appOrigin: string): void {
 }
 
 function enforceIpLimit(limiter: FixedWindowRateLimiter, request: FastifyRequest): void {
-  const result = limiter.consume(request.ip);
+  const result = limiter.consume(clientIp(request));
   if (!result.allowed) {
     throw new HttpError(429, "RATE_LIMITED", "Demasiadas solicitudes. Inténtalo más tarde.", {
       headers: { "Retry-After": String(result.retryAfterSeconds) },

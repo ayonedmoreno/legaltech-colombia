@@ -77,3 +77,50 @@ describe("client IP and X-Forwarded-For (API_TRUST_PROXY)", () => {
     await app.close();
   });
 });
+
+// D2-G: behind a listed proxy, anything that is not an IP address in X-Forwarded-For falls back to
+// the TCP peer, for the per-IP limit and for the recorded IP alike, and never causes a 400.
+describe("client IP fallback to the TCP peer (D2-G)", () => {
+  const PEER = "127.0.0.1";
+
+  function registerWith(app: App, email: string, headers: Record<string, string>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      remoteAddress: PEER,
+      headers: { origin: ORIGIN, "content-type": "application/json", ...headers },
+      payload: { email, password: "correct horse battery", fullName: "Ana Gómez" },
+    });
+  }
+
+  it.each([
+    ["an invalid X-Forwarded-For (not-an-ip)", { "x-forwarded-for": "not-an-ip" }],
+    ["an invalid X-Forwarded-For (<script>)", { "x-forwarded-for": "<script>" }],
+    ["an invalid X-Forwarded-For (999.1.1.1)", { "x-forwarded-for": "999.1.1.1" }],
+    ["an empty X-Forwarded-For", { "x-forwarded-for": "" }],
+    ["no X-Forwarded-For", {}],
+    ["only X-Real-IP", { "x-real-ip": "8.8.8.8" }],
+    ["only Forwarded", { forwarded: "for=9.9.9.9" }],
+  ])("uses the TCP peer for %s, without a 400", async (_label, headers) => {
+    const { app, repository } = await buildTestApp({ trustProxy: [PEER] });
+    const response = await registerWith(app, "ana@example.com", headers);
+    expect(response.statusCode).toBe(202);
+    expect(recordedIp(repository)).toBe(PEER);
+    await app.close();
+  });
+
+  it("keys the per-IP limit on the TCP peer for every invalid X-Forwarded-For", async () => {
+    const { app } = await buildTestApp({ trustProxy: [PEER] });
+    const invalid = ["not-an-ip", "<script>", "999.1.1.1", "", "a.b.c.d", "::zz"];
+    const statuses: number[] = [];
+    for (const [i, value] of invalid.entries()) {
+      const response = await registerWith(app, `user${i}@example.com`, {
+        "x-forwarded-for": value,
+      });
+      statuses.push(response.statusCode);
+    }
+    // One shared bucket (5 per window): the invalid values cannot open new buckets.
+    expect(statuses).toEqual([202, 202, 202, 202, 202, 429]);
+    await app.close();
+  });
+});

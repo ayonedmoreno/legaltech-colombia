@@ -95,6 +95,40 @@ describe("loadEnv", () => {
     },
   );
 
+  // D2-G: entries that proxy-addr reads as "trust every address" are refused; the whole list is
+  // rejected even when only one entry is. The error is a fixed text (nothing configured is echoed).
+  it.each([
+    "0.0.0.0/0",
+    "::/0",
+    "0000::/0",
+    "1.2.3.4/0",
+    "::ffff:0:0/96",
+    "::ffff:0.0.0.0/96",
+    "10.0.0.1, ::/0",
+    "127.0.0.1,::ffff:0:0/96",
+    "0.0.0.0/0, 10.0.0.0/8",
+  ])("rejects %s in API_TRUST_PROXY (trusts every address)", (value) => {
+    expect(() => loadEnv({ ...valid, API_TRUST_PROXY: value })).toThrow(
+      new Error(
+        "Invalid environment configuration: API_TRUST_PROXY: must not trust every address " +
+          "(a /0 range or the IPv4-mapped ::ffff:0:0/96 range)",
+      ),
+    );
+  });
+
+  // D2-G: no minimum prefix length; exact addresses and any other valid CIDR are accepted as is.
+  it.each([
+    "127.0.0.1",
+    "::1",
+    "10.0.0.0/8",
+    "127.0.0.0/8",
+    "fd00::/8",
+    "0.0.0.0/1",
+    "::ffff:0:0/97",
+  ])("accepts %s in API_TRUST_PROXY, unchanged", (value) => {
+    expect(loadEnv({ ...valid, API_TRUST_PROXY: value }).API_TRUST_PROXY).toEqual([value]);
+  });
+
   it("fails on missing required variables without leaking values", () => {
     expect(() => loadEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrow(/APP_ORIGIN/);
     try {
