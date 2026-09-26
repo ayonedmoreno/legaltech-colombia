@@ -1,15 +1,66 @@
 import { Prisma, type PrismaClient } from "@legaltech/database";
-import { DuplicateEmailError } from "./auth.types.js";
+import { DuplicateEmailError, LoginAttemptUnavailableError } from "./auth.types.js";
 import type {
   AuditLogEntry,
   AuthRepository,
   CreateSessionInput,
   CreateUserInput,
+  LoginAttemptScope,
   SessionRecord,
   TouchSessionInput,
   UserRecord,
 } from "./auth.types.js";
 import type { SessionRevokedReason } from "@legaltech/database";
+
+/** Advisory-lock namespace of the per-account login limit (ADR-002, D3): "LOGN". */
+export const LOGIN_LOCK_NAMESPACE = 0x4c4f474e;
+
+/**
+ * 32-bit advisory-lock key for an email hash: its first 8 hex digits, as a signed int4. Two
+ * accounts that share it are only serialized with each other; nothing else is affected.
+ */
+export function loginLockKey(emailHash: string): number {
+  return Number.parseInt(emailHash.slice(0, 8), 16) | 0;
+}
+
+/**
+ * ADR-002 D3 (S-2): Prisma's wait for a connection and the transaction lifetime. READ COMMITTED
+ * is set explicitly, not inherited from the database: the failure count must see what the
+ * previous holder of the lock committed. Under REPEATABLE READ the snapshot would be taken when
+ * the lock statement starts, before waiting for the lock, and concurrent attempts would all
+ * count the same stale number of failures.
+ */
+const LOGIN_TRANSACTION_OPTIONS = {
+  maxWait: 2_000,
+  timeout: 5_000,
+  isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+} as const;
+
+/**
+ * The failures that mean "this attempt could not be evaluated" (ADR-002 D3, S-3): the lock was
+ * not obtained within lock_timeout (PostgreSQL 55P03, reported by Prisma as raw-query error
+ * P2010), no pooled connection was available (P2024), or the interactive transaction could not
+ * start or expired (P2028). Every other error keeps its own behaviour.
+ */
+function isLoginAttemptUnavailable(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code === "P2024" || error.code === "P2028") return true;
+  return error.code === "P2010" && (error.meta as { code?: unknown } | undefined)?.code === "55P03";
+}
+
+function auditLogData(entry: AuditLogEntry) {
+  return {
+    actorUserId: entry.actorUserId,
+    actorRole: entry.actorRole,
+    action: entry.action,
+    entityType: entry.entityType ?? undefined,
+    entityId: entry.entityId ?? undefined,
+    metadata: (entry.metadata as Prisma.InputJsonObject | undefined) ?? undefined,
+    requestId: entry.requestId,
+    ip: entry.ip,
+    userAgent: entry.userAgent,
+  };
+}
 
 /** Prisma-backed implementation of AuthRepository. Only this file imports @prisma/client types for auth. */
 export class PrismaAuthRepository implements AuthRepository {
@@ -66,29 +117,47 @@ export class PrismaAuthRepository implements AuthRepository {
     });
   }
 
-  async countRecentFailedLogins(emailHash: string, since: Date): Promise<number> {
-    return this.prisma.auditLog.count({
-      where: {
-        action: "auth.login.failed",
-        occurredAt: { gt: since },
-        metadata: { path: ["emailHash"], equals: emailHash },
-      },
-    });
+  /**
+   * One transaction per attempt (ADR-002, D3): take the account's advisory lock (waiting at most
+   * lock_timeout), read the failure count and the time from PostgreSQL after the lock is held,
+   * and let the attempt write its failure event before the lock is released at commit. The
+   * count uses the same expression as the partial index `audit_logs_login_failed_email_hash_idx`.
+   */
+  async runLoginAttempt<T>(
+    emailHash: string,
+    windowMs: number,
+    attempt: (scope: LoginAttemptScope) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOGIN_LOCK_NAMESPACE}::int, ${loginLockKey(emailHash)}::int)`;
+        const [row] = await tx.$queryRaw<Array<{ failures: number; now: Date }>>`
+          WITH t AS (SELECT clock_timestamp() AS now)
+          SELECT
+            (SELECT count(*)::int FROM audit_logs
+              WHERE action = 'auth.login.failed'
+                AND metadata ->> 'emailHash' = ${emailHash}
+                AND occurred_at > t.now - make_interval(secs => ${windowMs / 1000}::float8)) AS failures,
+            t.now AS now
+          FROM t`;
+        const now = row!.now;
+        return attempt({
+          recentFailures: row!.failures,
+          now,
+          findUserByEmail: (email) => tx.user.findUnique({ where: { email } }),
+          writeAuditLog: async (entry) => {
+            await tx.auditLog.create({ data: { ...auditLogData(entry), occurredAt: now } });
+          },
+        });
+      }, LOGIN_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (isLoginAttemptUnavailable(error)) throw new LoginAttemptUnavailableError();
+      throw error;
+    }
   }
 
   async writeAuditLog(entry: AuditLogEntry): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        actorUserId: entry.actorUserId,
-        actorRole: entry.actorRole,
-        action: entry.action,
-        entityType: entry.entityType ?? undefined,
-        entityId: entry.entityId ?? undefined,
-        metadata: (entry.metadata as Prisma.InputJsonObject | undefined) ?? undefined,
-        requestId: entry.requestId,
-        ip: entry.ip,
-        userAgent: entry.userAgent,
-      },
-    });
+    await this.prisma.auditLog.create({ data: auditLogData(entry) });
   }
 }

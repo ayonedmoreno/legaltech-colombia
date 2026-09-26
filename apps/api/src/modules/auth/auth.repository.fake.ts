@@ -5,6 +5,7 @@ import type {
   AuthRepository,
   CreateSessionInput,
   CreateUserInput,
+  LoginAttemptScope,
   SessionRecord,
   TouchSessionInput,
   UserRecord,
@@ -21,7 +22,8 @@ export class FakeAuthRepository implements AuthRepository {
   readonly sessions = new Map<string, SessionRecord>();
   readonly auditLog: AuditLogEntry[] = [];
   private readonly auditOccurredAt: Date[] = [];
-  /** Test hook: overrides "now" for countRecentFailedLogins. Defaults to the real clock. */
+  private readonly loginLocks = new Map<string, Promise<void>>();
+  /** Test hook: stands in for PostgreSQL's clock (audit times, login-limit window). */
   clock: () => Date = () => new Date();
 
   async findUserByEmail(email: string): Promise<UserRecord | null> {
@@ -99,13 +101,47 @@ export class FakeAuthRepository implements AuthRepository {
     session.revokedReason = reason;
   }
 
-  async countRecentFailedLogins(emailHash: string, since: Date): Promise<number> {
-    return this.auditLog.filter(
-      (e, i) =>
-        e.action === "auth.login.failed" &&
-        e.metadata?.emailHash === emailHash &&
-        this.auditOccurredAt[i]!.getTime() > since.getTime(),
-    ).length;
+  /**
+   * Mirrors PrismaAuthRepository.runLoginAttempt: attempts for the same email hash run one at a
+   * time, in arrival order (the advisory lock); "now" comes from `clock` (PostgreSQL time); and
+   * the attempt's audit writes are applied only if it completes (the transaction commits).
+   */
+  async runLoginAttempt<T>(
+    emailHash: string,
+    windowMs: number,
+    attempt: (scope: LoginAttemptScope) => Promise<T>,
+  ): Promise<T> {
+    const previous = this.loginLocks.get(emailHash) ?? Promise.resolve();
+    let release!: () => void;
+    const held = previous.then(() => new Promise<void>((resolve) => (release = resolve)));
+    this.loginLocks.set(emailHash, held);
+    await previous;
+    try {
+      const now = this.clock();
+      const recentFailures = this.auditLog.filter(
+        (e, i) =>
+          e.action === "auth.login.failed" &&
+          e.metadata?.emailHash === emailHash &&
+          this.auditOccurredAt[i]!.getTime() > now.getTime() - windowMs,
+      ).length;
+      const pending: AuditLogEntry[] = [];
+      const result = await attempt({
+        recentFailures,
+        now,
+        findUserByEmail: (email) => this.findUserByEmail(email),
+        writeAuditLog: async (entry) => {
+          pending.push(entry);
+        },
+      });
+      for (const entry of pending) {
+        this.auditLog.push(entry);
+        this.auditOccurredAt.push(now);
+      }
+      return result;
+    } finally {
+      release();
+      if (this.loginLocks.get(emailHash) === held) this.loginLocks.delete(emailHash);
+    }
   }
 
   async writeAuditLog(entry: AuditLogEntry): Promise<void> {

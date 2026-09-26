@@ -69,11 +69,11 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 | 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002) |
 | 404 | `NOT_FOUND` | Ruta inexistente |
 | 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); *(D3, pendiente)* mismo mensaje en ambos casos |
-| 503 | `SERVICE_UNAVAILABLE` | *(D3, pendiente)* No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
+| 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
 | 500 | `INTERNAL_ERROR` | Error inesperado, sin detalles internos |
 
 `INVALID_OR_EXPIRED_TOKEN` existe en el contrato pero solo lo usarán los endpoints de verificación de email y recuperación de contraseña (no implementados).
-`SERVICE_UNAVAILABLE` existe en el contrato; su mensaje es "Servicio no disponible temporalmente. Inténtalo más tarde." y lo usará el login cuando se implemente D3.
+`SERVICE_UNAVAILABLE` existe en el contrato; su mensaje es "Servicio no disponible temporalmente. Inténtalo más tarde." y lo usa el login cuando no puede evaluar el límite por cuenta (D3-2).
 
 ## Endpoints
 
@@ -110,7 +110,7 @@ Inicia sesión y establece las cookies de sesión y CSRF.
 - **401:** `INVALID_CREDENTIALS` (mismo mensaje y forma para correo inexistente, contraseña errónea o cuenta suspendida)
 - **403:** `CSRF_INVALID` (origen no permitido) / `FORBIDDEN` (rol ADMIN o SUPER_ADMIN en producción sin MFA, ADR-002)
 - **429:** `RATE_LIMITED` (límite por IP o por cuenta, con `Retry-After`; *(D3, pendiente)* mismo mensaje en ambos casos)
-- **503:** *(D3, pendiente)* `SERVICE_UNAVAILABLE` (no se pudo aplicar el límite por cuenta; `Retry-After: 1`; el intento no se concede)
+- **503:** `SERVICE_UNAVAILABLE` (no se pudo aplicar el límite por cuenta; `Retry-After: 1`; el intento no se concede)
 - **Auditoría:** `auth.login.success`, `auth.login.failed`; *(D3, pendiente)* `auth.login.rate_limited`
 
 ### `POST /api/auth/logout`
@@ -222,7 +222,7 @@ Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compart
 
 ### Límite por cuenta en el login: objetivo aprobado de D3 (pendiente de implementación)
 
-> **Nota:** esta sección describe el comportamiento objetivo aprobado para D3 (ADR-002). Su implementación queda pendiente de los ciclos D3-2 a D3-4. Hasta entonces sigue vigente lo que indica la tabla anterior: bloqueo de 15 min tras 5 fallos, `Retry-After: 900`, mensaje propio del límite por cuenta, sin `auth.login.rate_limited` y sin 503. Esta nota y las marcas *(D3, pendiente)* se eliminan al cerrar D3, cuando la tabla pase a describir el retardo progresivo.
+> **Nota:** esta sección describe el comportamiento objetivo aprobado para D3 (ADR-002). La atomicidad (transacción, bloqueo consultivo, `lock_timeout`, tiempo de PostgreSQL para la ventana y el 503) ya está implementada (D3-2); el retardo progresivo, el `Retry-After` exacto, `auth.login.rate_limited` y el mensaje único quedan pendientes de D3-3 y D3-4. Hasta entonces sigue vigente lo que indica la tabla anterior: bloqueo de 15 min tras 5 fallos, `Retry-After: 900`, mensaje propio del límite por cuenta y sin `auth.login.rate_limited`. Esta nota y las marcas *(D3, pendiente)* se eliminan al cerrar D3, cuando la tabla pase a describir el retardo progresivo.
 
 - **Clave:** SHA-256 del email normalizado (minúsculas, sin espacios). Se aplica igual a correos inexistentes: la respuesta no revela si la cuenta existe.
 - **Qué cuenta:** los `auth.login.failed` de las últimas 24 h: credenciales inválidas, correo inexistente, cuenta suspendida y barrera MFA de producción.

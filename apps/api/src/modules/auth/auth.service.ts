@@ -6,8 +6,8 @@ import { toPublicUser } from "./auth.mapper.js";
 import { can } from "./auth.policy.js";
 import { createSessionForUser, csrfTokenMatchesSession, loadValidSession } from "./auth.session.js";
 import type { Clock } from "./auth.session.js";
-import { DuplicateEmailError } from "./auth.types.js";
-import type { AuthRepository, SessionRecord, UserRecord } from "./auth.types.js";
+import { DuplicateEmailError, LoginAttemptUnavailableError } from "./auth.types.js";
+import type { AuditLogEntry, AuthRepository, SessionRecord, UserRecord } from "./auth.types.js";
 import type { User } from "@legaltech/contracts";
 
 export interface RequestContext {
@@ -37,6 +37,33 @@ export interface CurrentUserResult {
   session: SessionRecord;
   /** The same user as seen by policies (ADR-003). */
   actor: Actor;
+}
+
+/** How a login attempt ended, decided inside the per-account attempt and acted on after it. */
+type LoginOutcome =
+  | { kind: "throttled" }
+  | { kind: "invalid_credentials" }
+  | { kind: "mfa_required" }
+  | { kind: "granted"; user: UserRecord };
+
+/** The `auth.login.failed` event: counts towards the per-account limit (ADR-002). */
+function loginFailure(
+  user: UserRecord | null,
+  emailHash: string,
+  context: RequestContext,
+  reason?: string,
+): AuditLogEntry {
+  return {
+    actorUserId: user?.id ?? null,
+    actorRole: user?.role ?? null,
+    action: "auth.login.failed",
+    entityType: user ? "User" : null,
+    entityId: user?.id ?? null,
+    metadata: { emailHash, ...(reason ? { reason } : {}) },
+    requestId: context.requestId,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  };
 }
 
 /** Lowercased, trimmed form stored in the database (matches the `users_email_normalized_chk` constraint). */
@@ -132,38 +159,71 @@ export class AuthService {
   ): Promise<LoginResult> {
     const email = normalizeEmail(input.email);
     const emailHash = sha256Hex(email);
-    const since = new Date(this.clock().getTime() - this.accountLoginWindowMs);
 
-    const recentFailures = await this.repository.countRecentFailedLogins(emailHash, since);
-    if (recentFailures >= this.accountLoginAttemptLimit) {
+    // ADR-002 (D3): the limit check, the password verification and the failure record run as
+    // one attempt per account, serialized in the database, so concurrent attempts cannot both
+    // pass the limit. The outcome is only acted on after that attempt has committed.
+    let outcome: LoginOutcome;
+    try {
+      outcome = await this.repository.runLoginAttempt(
+        emailHash,
+        this.accountLoginWindowMs,
+        async (attempt): Promise<LoginOutcome> => {
+          if (attempt.recentFailures >= this.accountLoginAttemptLimit) return { kind: "throttled" };
+
+          const user = await attempt.findUserByEmail(email);
+          // Always run exactly one Argon2id verification, against a dummy hash when there is no
+          // such user, so an unknown email is not answered measurably faster than a wrong password.
+          const passwordOk = await verifyPassword(
+            user?.passwordHash ?? (await dummyPasswordHash()),
+            input.password,
+          );
+
+          if (!user || !passwordOk || user.status !== "ACTIVE") {
+            await attempt.writeAuditLog(loginFailure(user, emailHash, context));
+            return { kind: "invalid_credentials" };
+          }
+
+          if (this.isProduction && (user.role === "ADMIN" || user.role === "SUPER_ADMIN")) {
+            // ADR-002: fail closed. MFA is not implemented yet (out of scope for this Sprint), so
+            // no ADMIN/SUPER_ADMIN session can be created in production until it is.
+            await attempt.writeAuditLog(
+              loginFailure(user, emailHash, context, "mfa_required_production"),
+            );
+            return { kind: "mfa_required" };
+          }
+
+          return { kind: "granted", user };
+        },
+      );
+    } catch (error) {
+      if (error instanceof LoginAttemptUnavailableError) {
+        throw new HttpError(
+          503,
+          "SERVICE_UNAVAILABLE",
+          "Servicio no disponible temporalmente. Inténtalo más tarde.",
+          { headers: { "Retry-After": "1" } },
+        );
+      }
+      throw error;
+    }
+
+    if (outcome.kind === "throttled") {
       throw new HttpError(429, "RATE_LIMITED", "Demasiados intentos. Inténtalo más tarde.", {
         headers: { "Retry-After": String(Math.ceil(this.accountLoginWindowMs / 1000)) },
       });
     }
-
-    const user = await this.repository.findUserByEmail(email);
-    // Always run exactly one Argon2id verification, against a dummy hash when there is no
-    // such user, so an unknown email is not answered measurably faster than a wrong password.
-    const passwordOk = await verifyPassword(
-      user?.passwordHash ?? (await dummyPasswordHash()),
-      input.password,
-    );
-
-    if (!user || !passwordOk || user.status !== "ACTIVE") {
-      await this.recordLoginFailure(user, emailHash, context);
+    if (outcome.kind === "invalid_credentials") {
       throw new HttpError(401, "INVALID_CREDENTIALS", "Credenciales inválidas.");
     }
-
-    if (this.isProduction && (user.role === "ADMIN" || user.role === "SUPER_ADMIN")) {
-      // ADR-002: fail closed. MFA is not implemented yet (out of scope for this Sprint), so
-      // no ADMIN/SUPER_ADMIN session can be created in production until it is.
-      await this.recordLoginFailure(user, emailHash, context, "mfa_required_production");
+    if (outcome.kind === "mfa_required") {
       throw new HttpError(
         403,
         "FORBIDDEN",
         "El inicio de sesión para este rol requiere autenticación multifactor, aún no disponible.",
       );
     }
+    const { user } = outcome;
 
     const { sessionRaw, csrfRaw } = await createSessionForUser(
       this.repository,
@@ -184,25 +244,6 @@ export class AuthService {
     });
 
     return { user: toPublicUser(user), sessionRaw, csrfRaw };
-  }
-
-  private async recordLoginFailure(
-    user: UserRecord | null,
-    emailHash: string,
-    context: RequestContext,
-    reason?: string,
-  ): Promise<void> {
-    await this.repository.writeAuditLog({
-      actorUserId: user?.id ?? null,
-      actorRole: user?.role ?? null,
-      action: "auth.login.failed",
-      entityType: user ? "User" : null,
-      entityId: user?.id ?? null,
-      metadata: { emailHash, ...(reason ? { reason } : {}) },
-      requestId: context.requestId,
-      ip: context.ip,
-      userAgent: context.userAgent,
-    });
   }
 
   /**
