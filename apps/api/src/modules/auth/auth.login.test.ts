@@ -135,6 +135,82 @@ describe("POST /api/auth/login", () => {
     await app.close();
   });
 
+  it("answers a SUSPENDED user identically whether the password is right or wrong", async () => {
+    const { app, repository } = await registerAndLogin();
+    const [user] = [...repository.users.values()];
+    user!.status = "SUSPENDED";
+
+    const rightPassword = await login(app, CREDENTIALS);
+    const wrongPassword = await login(app, { ...CREDENTIALS, password: "wrong password entirely" });
+
+    // Otherwise a suspended account would still work as an oracle for its password.
+    const rightBody = rightPassword.json();
+    const wrongBody = wrongPassword.json();
+    expect(rightPassword.statusCode).toBe(401);
+    expect(wrongPassword.statusCode).toBe(401);
+    expect(rightBody.error.code).toBe("INVALID_CREDENTIALS");
+    expect(wrongBody.error.code).toBe("INVALID_CREDENTIALS");
+    expect(rightBody.error.message).toBe(wrongBody.error.message);
+    expect(rightBody.error.details).toEqual(wrongBody.error.details);
+    expect(Object.keys(rightBody.error).sort()).toEqual(Object.keys(wrongBody.error).sort());
+    expect(rightPassword.headers["set-cookie"]).toBeUndefined();
+    expect(wrongPassword.headers["set-cookie"]).toBeUndefined();
+    expect(repository.sessions.size).toBe(0);
+    await app.close();
+  });
+
+  it.each([
+    {
+      scenario: "a wrong password",
+      options: {},
+      status: 401,
+      prepare: async () => {},
+      credentials: { ...CREDENTIALS, password: "wrong password entirely" },
+    },
+    {
+      scenario: "an unknown email",
+      options: {},
+      status: 401,
+      prepare: async () => {},
+      credentials: { email: "nobody@example.com", password: "whatever12345" },
+    },
+    {
+      scenario: "a throttled account, even with the right password",
+      options: { accountLoginAttemptLimit: 1 },
+      status: 429,
+      prepare: async (app: Awaited<ReturnType<typeof buildTestApp>>["app"]) => {
+        await login(app, { ...CREDENTIALS, password: "wrong password entirely" });
+      },
+      credentials: CREDENTIALS,
+    },
+    {
+      scenario: "an ADMIN blocked by the production MFA barrier",
+      options: { isProduction: true },
+      status: 403,
+      prepare: async (
+        _app: Awaited<ReturnType<typeof buildTestApp>>["app"],
+        repository?: Awaited<ReturnType<typeof buildTestApp>>["repository"],
+      ) => {
+        const [user] = [...repository!.users.values()];
+        user!.role = "ADMIN";
+      },
+      credentials: CREDENTIALS,
+    },
+  ])(
+    "issues no cookie and creates no session for $scenario",
+    async ({ options, status, prepare, credentials }) => {
+      const { app, repository } = await registerAndLogin(options);
+      await prepare(app, repository);
+
+      const response = await login(app, credentials);
+
+      expect(response.statusCode).toBe(status);
+      expect(response.headers["set-cookie"]).toBeUndefined();
+      expect(repository.sessions.size).toBe(0);
+      await app.close();
+    },
+  );
+
   it("audits a successful login with the acting user", async () => {
     const { app, repository } = await registerAndLogin();
     await login(app, CREDENTIALS);

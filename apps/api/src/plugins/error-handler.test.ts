@@ -71,6 +71,7 @@ describe("error handler: framework errors", () => {
         requestId: expect.any(String),
       },
     });
+    expect(body.error.requestId).not.toBe("");
     expect(response.headers["x-request-id"]).toBe(body.error.requestId);
     for (const fragment of ["JSON", "Unexpected", "position", "FST_", "SyntaxError"]) {
       expect(response.body).not.toContain(fragment);
@@ -114,6 +115,7 @@ describe("error handler: HttpError", () => {
         requestId: expect.any(String),
       },
     });
+    expect(body.error.requestId).not.toBe("");
     expect(response.headers["x-request-id"]).toBe(body.error.requestId);
     await app.close();
   });

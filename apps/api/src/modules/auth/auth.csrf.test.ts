@@ -141,6 +141,39 @@ describe("CSRF enforcement on mutating requests (logout)", () => {
     await app.close();
   });
 
+  it("accepts a same-origin Referer when Origin is absent", async () => {
+    const { app, sessionRaw, csrfRaw } = await loggedInApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: {
+        referer: `${ORIGIN}/dashboard`,
+        "x-csrf-token": csrfRaw,
+        cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }),
+      },
+    });
+    expect(response.statusCode).toBe(204);
+    await app.close();
+  });
+
+  it("rejects a request with neither Origin nor Referer even with a correct CSRF token", async () => {
+    const { app, repository, sessionRaw, csrfRaw } = await loggedInApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/logout",
+      headers: {
+        "x-csrf-token": csrfRaw,
+        cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }),
+      },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("CSRF_INVALID");
+    // Rejected before anything happens: the session is still active.
+    expect(repository.sessions.size).toBe(1);
+    expect([...repository.sessions.values()].every((s) => s.revokedAt === null)).toBe(true);
+    await app.close();
+  });
+
   it("rejects a mismatched Origin even with a correct CSRF token", async () => {
     const { app, sessionRaw, csrfRaw } = await loggedInApp();
     const response = await app.inject({

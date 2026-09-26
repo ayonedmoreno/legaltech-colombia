@@ -15,6 +15,12 @@ describe("isSameOrigin", () => {
     ).toBe(false);
   });
 
+  it("accepts a matching Origin even when Referer is cross-origin (Origin takes precedence)", () => {
+    expect(
+      isSameOrigin({ origin: APP_ORIGIN, referer: "http://evil.example/login" }, APP_ORIGIN),
+    ).toBe(true);
+  });
+
   it("falls back to a same-origin Referer when Origin is absent", () => {
     expect(isSameOrigin({ referer: `${APP_ORIGIN}/login?next=%2Fdashboard` }, APP_ORIGIN)).toBe(
       true,
