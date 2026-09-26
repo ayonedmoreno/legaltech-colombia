@@ -11,10 +11,10 @@ import { HttpError } from "../../common/http-error.js";
 import { FixedWindowRateLimiter } from "../../security/rate-limiter.js";
 import { generateOpaqueToken } from "../../security/crypto.js";
 import {
-  CSRF_COOKIE,
   clearSessionCookies,
   readCsrfToken,
   readSessionToken,
+  setCsrfCookie,
   setSessionCookies,
 } from "./auth.cookies.js";
 import { isSameOrigin } from "./auth.origin.js";
@@ -100,7 +100,7 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
 
     const csrfToken = generateOpaqueToken();
     await authService.rotateCsrfToken(current.session.id, csrfToken.hash);
-    reply.setCookie(CSRF_COOKIE, csrfToken.raw, { secure: true, sameSite: "lax", path: "/" });
+    setCsrfCookie(reply, csrfToken.raw);
     const body: CsrfResponse = { csrfToken: csrfToken.raw };
     return reply.send(body);
   });

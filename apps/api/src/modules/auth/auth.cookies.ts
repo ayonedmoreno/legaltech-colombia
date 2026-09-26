@@ -36,7 +36,12 @@ export function setSessionCookies(
   tokens: { sessionRaw: string; csrfRaw: string },
 ): void {
   reply.setCookie(SESSION_COOKIE, tokens.sessionRaw, { ...BASE_ATTRIBUTES, httpOnly: true });
-  reply.setCookie(CSRF_COOKIE, tokens.csrfRaw, { ...BASE_ATTRIBUTES, httpOnly: false });
+  setCsrfCookie(reply, tokens.csrfRaw);
+}
+
+/** Sets (or reissues, from `GET /api/auth/csrf`) the CSRF cookie with the shared attributes. */
+export function setCsrfCookie(reply: FastifyReply, csrfRaw: string): void {
+  reply.setCookie(CSRF_COOKIE, csrfRaw, { ...BASE_ATTRIBUTES, httpOnly: false });
 }
 
 /**

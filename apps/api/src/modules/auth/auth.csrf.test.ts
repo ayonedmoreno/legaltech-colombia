@@ -54,6 +54,38 @@ describe("GET /api/auth/csrf", () => {
     await app.close();
   });
 
+  it("reissues the csrf cookie with the same attributes as at login (ADR-002)", async () => {
+    const { app, sessionRaw } = await loggedInApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/csrf",
+      headers: { cookie: cookieHeader({ "__Host-session": sessionRaw }) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const csrf = findSetCookie(response.headers["set-cookie"], "__Host-csrf");
+    expect(csrf?.value).toBe(response.json().csrfToken);
+    const attributes = csrf!.attributes.map((a) => a.toLowerCase());
+    expect(attributes).toEqual(expect.arrayContaining(["secure", "samesite=lax", "path=/"]));
+    // `__Host-` prefix: no Domain. Double-submit: readable by client code, so no HttpOnly.
+    expect(attributes.some((a) => a.startsWith("domain"))).toBe(false);
+    expect(attributes).not.toContain("httponly");
+    await app.close();
+  });
+
+  it("does not set a cookie when the existing csrf token is reused", async () => {
+    const { app, sessionRaw, csrfRaw } = await loggedInApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/csrf",
+      headers: { cookie: cookieHeader({ "__Host-session": sessionRaw, "__Host-csrf": csrfRaw }) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    await app.close();
+  });
+
   it("rejects a request with no session", async () => {
     const { app } = await loggedInApp();
     const response = await app.inject({ method: "GET", url: "/api/auth/csrf" });

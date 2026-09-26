@@ -93,6 +93,48 @@ describe("POST /api/auth/login", () => {
     await app.close();
   });
 
+  it("rejects a SUSPENDED user with correct credentials exactly like a wrong password", async () => {
+    const { app, repository } = await registerAndLogin();
+    const wrongPassword = await login(app, { ...CREDENTIALS, password: "wrong password entirely" });
+    const [user] = [...repository.users.values()];
+    user!.status = "SUSPENDED";
+
+    const suspended = await login(app, CREDENTIALS);
+
+    // Same contract as a wrong password (request ids legitimately differ, see above): the
+    // response must not reveal that the password was right or that the account is suspended.
+    const wrongBody = wrongPassword.json();
+    const suspendedBody = suspended.json();
+    expect(suspended.statusCode).toBe(401);
+    expect(suspendedBody.error.code).toBe("INVALID_CREDENTIALS");
+    expect(suspended.statusCode).toBe(wrongPassword.statusCode);
+    expect(suspendedBody.error.code).toBe(wrongBody.error.code);
+    expect(suspendedBody.error.message).toBe(wrongBody.error.message);
+    expect(suspendedBody.error.details).toEqual(wrongBody.error.details);
+    expect(Object.keys(suspendedBody).sort()).toEqual(Object.keys(wrongBody).sort());
+    expect(Object.keys(suspendedBody.error).sort()).toEqual(Object.keys(wrongBody.error).sort());
+
+    // No session is created and no cookie is issued.
+    expect(repository.sessions.size).toBe(0);
+    expect(suspended.headers["set-cookie"]).toBeUndefined();
+    await app.close();
+  });
+
+  it("audits a SUSPENDED user's login attempt as a failure attributed to that user", async () => {
+    const { app, repository } = await registerAndLogin();
+    const [user] = [...repository.users.values()];
+    user!.status = "SUSPENDED";
+
+    await login(app, CREDENTIALS);
+
+    const failures = repository.auditLog.filter((e) => e.action === "auth.login.failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.actorUserId).toBe(user!.id);
+    expect(failures[0]?.metadata?.emailHash).toBeTypeOf("string");
+    expect(repository.auditLog.some((e) => e.action === "auth.login.success")).toBe(false);
+    await app.close();
+  });
+
   it("audits a successful login with the acting user", async () => {
     const { app, repository } = await registerAndLogin();
     await login(app, CREDENTIALS);
