@@ -1,8 +1,8 @@
 # API_SPEC.md
 
-**Versión:** 0.2 (autenticación implementada, Sprint 1B)
-**Fecha:** 2026-09-24
-**Estado:** Describe la implementación actual. Los endpoints marcados "Diseñados, no implementados" son diseño aprobado, aún sin código.
+**Versión:** 0.3 (cierre de la Fase 1)
+**Fecha:** 2026-09-27
+**Estado:** Aprobado para el cierre de la Fase 1 (2026-09-27). Describe la implementación actual.
 **Alcance:** endpoints de autenticación e infraestructura. Casos, documentos, pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
@@ -21,7 +21,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 - **Cookie CSRF** `__Host-csrf`: `Secure`, `SameSite=Lax`, `Path=/`, sin `Domain` y **sin** `HttpOnly` a propósito (ver doble envío abajo).
 - No se firman las cookies: el token es en sí un secreto de alta entropía validado contra su hash.
 - **Expiración:** por inactividad (deslizante: cada petición autenticada la extiende) y absoluta (techo fijo que la actividad no puede extender). Valores por rol en `auth.session.ts`: `USER` 7 días de inactividad y 30 absolutos; roles internos más cortos (a confirmar, ADR-002).
-- **Revocación:** una sesión revocada (`revoked_at`) deja de autenticar de inmediato. No se implementa rotación del identificador en este sprint (no existen aún cambio ni restablecimiento de contraseña, que son los eventos que la disparan).
+- **Revocación:** una sesión revocada (`revoked_at`) deja de autenticar de inmediato. Restablecer la contraseña revoca todas las sesiones del usuario (motivo `PASSWORD_RESET`). La rotación del identificador (ADR-002) se describe en `POST /api/auth/session/rotate`; al iniciar sesión, la sesión que ya tuviera el navegador se revoca con motivo `ROTATED`.
 
 ### CSRF: doble envío de cookie (ADR-002)
 
@@ -39,6 +39,11 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.login.failed` | Credenciales inválidas, cuenta suspendida o rol bloqueado por la barrera MFA | Usuario si existe; sin actor si el correo no existe | `emailHash` (SHA-256 del correo normalizado); `reason: mfa_required_production` si aplica |
 | `auth.login.rate_limited` | Intento de login rechazado (429) por el límite por cuenta; no cuenta como fallo. Se escribe en la misma transacción que decide el bloqueo, con la hora de PostgreSQL. No se registra por el 429 del límite por IP ni por el 503 | Sin actor | `emailHash` (SHA-256 del correo normalizado), `retryAfterSeconds` |
 | `auth.logout` | Logout con una sesión válida | Usuario | — |
+| `auth.password.reset_requested` | Solicitud de recuperación de contraseña (`POST /api/auth/password/forgot`), exista o no la cuenta; cuenta para el límite por email | Usuario si existe; sin actor si el correo no existe | `emailHash` (SHA-256 del correo normalizado) |
+| `auth.password.reset_completed` | Contraseña restablecida con un token válido (`POST /api/auth/password/reset`) | Usuario | — |
+| `auth.email.verified` | Email verificado con un token válido (`POST /api/auth/email/verify`) | Usuario verificado | — |
+| `auth.logout_all` | Cierre de todas las sesiones del usuario (`POST /api/auth/logout-all`) | Usuario | — |
+| `auth.session.revoked` | Revocación de una sesión propia por ID (`DELETE /api/auth/sessions/:sessionId`) | Usuario | — (la sesión revocada es la entidad) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
@@ -99,7 +104,7 @@ Crea una cuenta con rol `USER`.
 - **403:** `CSRF_INVALID` (origen no permitido)
 - **429:** `RATE_LIMITED`
 - **Auditoría:** `auth.register` (metadata `outcome: "created" | "duplicate"`)
-- **Nota (Sprint 1B):** no se envía email de verificación todavía; `EmailVerificationToken` se usa en una rebanada posterior (`POST /api/auth/verify-email`, `POST /api/auth/resend-verification`).
+- **Verificación inicial:** una cuenta nueva registra, en la misma transacción, el email de verificación inicial en el outbox (decisión P6). El token se genera al despachar el email; un registro duplicado no registra nada.
 
 ### `POST /api/auth/login`
 
@@ -111,6 +116,7 @@ Inicia sesión y establece las cookies de sesión y CSRF.
 - **403:** `CSRF_INVALID` (origen no permitido) / `FORBIDDEN` (rol ADMIN o SUPER_ADMIN en producción sin MFA, ADR-002)
 - **429:** `RATE_LIMITED` (límite por IP o por cuenta, con `Retry-After`; mismo mensaje en ambos casos)
 - **503:** `SERVICE_UNAVAILABLE` (no se pudo aplicar el límite por cuenta; `Retry-After: 1`; el intento no se concede)
+- **Rotación al iniciar sesión (ADR-002; decisión P12):** si la petición trae la cookie de una sesión existente, tras crear la nueva esa sesión anterior se revoca con motivo `ROTATED`. Un login fallido no la toca.
 - **Auditoría:** `auth.login.success`, `auth.login.failed`, `auth.login.rate_limited`
 
 ### `POST /api/auth/logout`
@@ -119,7 +125,7 @@ Revoca la sesión actual.
 
 - **204** — también cuando la sesión ya no era válida (ninguna sesión, ya revocada o expirada): el logout es siempre seguro. En ese caso no se exige CSRF, porque no hay nada que proteger.
 - Con una sesión válida, requiere `Origin` correcto y `X-CSRF-Token`: **403** `CSRF_INVALID` si faltan o no coinciden.
-- **Auditoría:** `auth.logout` (solo cuando había una sesión que revocar)
+- **Auditoría:** `auth.logout` (solo cuando había una sesión que revocar), en la misma transacción que la revocación: se guardan ambas o ninguna. Si otra petición la revocó entretanto, no se escribe un segundo evento.
 
 ### `GET /api/auth/me`
 
@@ -129,55 +135,95 @@ Devuelve el usuario autenticado. Autorizado por la policy del módulo de autenti
 - **401:** `UNAUTHENTICATED` — sin sesión, sesión inválida/expirada, o usuario suspendido.
 - **404:** `NOT_FOUND` si la policy denegara la lectura (ADR-003: nunca 403, para no confirmar la existencia del recurso). Con la matriz del Sprint 1 no ocurre para el propio usuario.
 
-### Diseñados, no implementados en Sprint 1B
+### `GET /api/auth/sessions`
 
-Estos endpoints están definidos como parte del diseño aprobado, pero esta rebanada no los implementa (quedan para las rebanadas indicadas en la sección "Fuera de esta versión" al final del documento):
+Lista las sesiones activas del usuario autenticado, solo las propias (`session:list`, ADR-003): no revocadas y dentro de su expiración por inactividad y absoluta. La sesión con la que se hace la petición se marca con `current: true`.
 
-#### `POST /api/auth/logout-all`
+- **200:** `{ "sessions": [Session] }`, de la usada más recientemente a la menos.
+- **401:** `UNAUTHENTICATED` — sin sesión, sesión inválida/expirada, o usuario suspendido.
+- **404:** `NOT_FOUND` si la policy denegara el listado (ADR-003). Con la matriz del Sprint 1 no ocurre para el propio usuario.
+- Petición segura (GET): no exige token CSRF. Sin evento de auditoría.
+- Una sesión ya rotada, aunque siga en su periodo de gracia, no se lista: la sustituye la nueva.
 
-Revoca todas las sesiones del usuario. Requiere sesión y CSRF. **204**. Auditoría: `auth.logout_all`.
+### `DELETE /api/auth/sessions/:sessionId`
 
-#### `GET /api/auth/sessions`
+Revoca una sesión propia activa (`session:revoke`, ADR-003), con motivo `LOGOUT`. Requiere sesión y CSRF; ambos se comprueban antes de mirar la sesión indicada.
 
-Lista las sesiones activas del usuario (solo las propias). **200:** `{ "sessions": [Session] }`, con la sesión actual marcada.
+- **204:** sin cuerpo. Si la sesión revocada es la de la petición, además se borran las cookies de sesión y CSRF, como en `POST /api/auth/logout`.
+- **401:** `UNAUTHENTICATED` — sin sesión válida.
+- **403:** `CSRF_INVALID` — token CSRF u origen incorrectos.
+- **404:** `NOT_FOUND`, con la misma respuesta cuando la sesión pertenece a otro usuario, no existe, no es un identificador válido o ya está revocada o expirada (protección IDOR, ADR-003).
+- **Auditoría:** `auth.session.revoked`, con el usuario como actor y la sesión revocada como entidad, en la misma transacción que la revocación (ambas o ninguna; una revocación concurrente de la misma sesión responde 404 sin evento).
 
-#### `DELETE /api/auth/sessions/:sessionId`
+### `POST /api/auth/email/verify`
 
-Revoca una sesión propia. Requiere sesión y CSRF. **204**. **404** también cuando la sesión pertenece a otro usuario (protección IDOR, ADR-003). Auditoría: `auth.session.revoked`.
+Confirma el email con el token del enlace de verificación. Petición previa a tener sesión, como `register` y `login`: verifica `Origin`/`Referer` y no exige token CSRF.
 
-#### `POST /api/auth/email/verify`
+- **Body:** `{ "token": "string" }` (1 a 256 caracteres).
+- **204:** el token existía, no estaba usado ni caducado: queda usado y el email, verificado.
+- **400:** `INVALID_OR_EXPIRED_TOKEN` — token inexistente, usado o caducado, sin distinguirlos; `VALIDATION_ERROR` si el cuerpo no es válido.
+- **403:** `CSRF_INVALID` — origen no permitido.
+- **Auditoría:** `auth.email.verified`, en la misma transacción que el uso del token y la verificación: se guarda todo o nada (si falla, el enlace sigue siendo válido).
+- **Enlace del email:** `APP_ORIGIN/verificar-correo#token=…`. El token va en el fragmento de la URL, que el navegador nunca envía a ningún servidor; la página lo lee y lo envía en el cuerpo de esta petición (decisión P14).
+- **Token:** 256 bits, solo se guarda su hash, un solo uso, caduca a las 24 h. Se genera al despachar el email (outbox, decisión C2); uno nuevo invalida los anteriores sin usar (decisión P7).
 
-Confirma el email con el token recibido.
+### `POST /api/auth/email/verification/resend`
 
-- **Body:** `{ "token": "string" }`
-- **204**
-- **400:** `INVALID_OR_EXPIRED_TOKEN` (token inexistente, usado o expirado, sin distinguirlos)
-- **Auditoría:** `auth.email.verified`
+Registra un nuevo email de verificación para el usuario de la sesión. Requiere sesión y CSRF. Si el email ya está verificado, no registra nada y responde igual.
 
-#### `POST /api/auth/email/verification/resend`
+- **202:** `{ "status": "accepted" }`.
+- **401:** `UNAUTHENTICATED` — sin sesión válida.
+- **403:** `CSRF_INVALID`.
+- **429:** `RATE_LIMITED`, con `Retry-After` (límites en la tabla de rate limits).
+- **503:** `SERVICE_UNAVAILABLE`, con `Retry-After: 1`, si no se pudo evaluar el límite por cuenta (mismo criterio que el login, D3).
+- Sin evento de auditoría propio.
 
-Reenvía el email de verificación. Requiere sesión y CSRF.
+### `POST /api/auth/session/rotate`
 
-- **202:** `{ "status": "accepted" }`
-- **429:** `RATE_LIMITED`
+Rotación periódica del identificador de sesión (ADR-002: "periódicamente durante el uso"; decisiones P9–P11 del Sprint 1B). Requiere sesión y CSRF (`session:revoke` sobre la propia sesión, ADR-003).
 
-#### `POST /api/auth/password/forgot`
+- **200:** `{ "rotated": boolean }`.
+  - `true`: la sesión tenía ya la antigüedad de su intervalo de rotación. Se crea una sesión nueva (identificador y token CSRF nuevos, con el **mismo techo absoluto**: la rotación nunca alarga la vida de la sesión) y la respuesta fija las cookies nuevas de sesión y CSRF.
+  - `false`: todavía no tocaba, o la sesión ya había sido rotada (por ejemplo, por otra petición simultánea); no cambia nada.
+- **Intervalo:** 1 h para `USER`; 15 min para `PROFESSIONAL`, `ADMIN` y `SUPER_ADMIN`, contado desde la creación de la sesión.
+- **Gracia:** la sesión anterior sigue siendo válida 60 s tras la rotación, para las peticiones ya en curso; después deja de autenticar. Durante la gracia no está revocada, así que `logout`, `logout-all` y el restablecimiento de contraseña también la cortan. En la siguiente rotación del usuario, las sesiones con la gracia ya cumplida se revocan con motivo `ROTATED`.
+- **Concurrencia:** una sola sentencia condicional marca la sesión como rotada; dos peticiones simultáneas no pueden rotarla dos veces.
+- **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
+- **Auditoría:** ninguna (decisión P9): la rotación es un mecanismo automático, no una acción del usuario.
+- **Disparo:** la web lo llama desde el navegador al abrir `/panel` y cada 5 minutos mientras está abierto; la API decide si toca. La comprobación de sesión que hace el servidor web (`GET /api/auth/me`) nunca rota, porque su respuesta no llega al navegador.
 
-Solicita la recuperación de contraseña.
+### `POST /api/auth/logout-all`
 
-- **Body:** `{ "email": "string" }`
-- **202:** `{ "status": "accepted" }`, siempre, exista o no la cuenta.
-- **429:** `RATE_LIMITED`
-- **Auditoría:** `auth.password.reset_requested`
+Revoca todas las sesiones del usuario que no estén revocadas, incluida la de la petición, con motivo `LOGOUT_ALL` (`session:revoke` sobre las propias, ADR-003). Las ya revocadas conservan su primera revocación. Requiere sesión y CSRF.
 
-#### `POST /api/auth/password/reset`
+- **204:** sin cuerpo; se borran las cookies de sesión y CSRF.
+- **401:** `UNAUTHENTICATED` — sin sesión válida (también al repetir la llamada con la sesión ya revocada).
+- **403:** `CSRF_INVALID` — token CSRF u origen incorrectos; no se revoca nada.
+- **Auditoría:** `auth.logout_all`, con el usuario como actor y como entidad, en la misma transacción que las revocaciones (todas o ninguna); solo si se revocó al menos una sesión.
 
-Establece una nueva contraseña con el token recibido.
+### `POST /api/auth/password/forgot`
 
-- **Body:** `{ "token": "string", "newPassword": "string" }`
-- **204:** revoca todas las sesiones del usuario y envía aviso por email.
-- **400:** `INVALID_OR_EXPIRED_TOKEN` / `VALIDATION_ERROR`
-- **Auditoría:** `auth.password.reset_completed`
+Solicita la recuperación de contraseña. Petición previa a tener sesión: verifica `Origin`/`Referer`, no exige token CSRF.
+
+- **Body:** `{ "email": "string" }`.
+- **202:** `{ "status": "accepted" }`, siempre, exista o no la cuenta. Si existe, se registra en el outbox el email de restablecimiento; su token se genera al despacharlo.
+- **400:** `VALIDATION_ERROR`. **403:** `CSRF_INVALID` (origen no permitido).
+- **429:** `RATE_LIMITED`, con `Retry-After` (límites en la tabla de rate limits); el límite por email se aplica igual a correos inexistentes.
+- **503:** `SERVICE_UNAVAILABLE`, con `Retry-After: 1`, si no se pudo evaluar el límite por email (mismo criterio que el login, D3).
+- **Auditoría:** `auth.password.reset_requested` (también para correos inexistentes, con el correo solo como hash). Una solicitud rechazada por el límite no se audita ni cuenta.
+- **Enlace del email:** `APP_ORIGIN/restablecer-contrasena#token=…` (token en el fragmento, decisión P14).
+- **Token:** 256 bits, solo se guarda su hash, un solo uso, caduca a los 30 min; uno nuevo invalida los anteriores sin usar (decisión P7).
+
+### `POST /api/auth/password/reset`
+
+Establece una nueva contraseña con el token del enlace. Petición previa a tener sesión: verifica `Origin`/`Referer`, no exige token CSRF.
+
+- **Body:** `{ "token": "string", "newPassword": "string" }` (contraseña de 12 a 128 caracteres).
+- **204:** en una sola transacción, el token queda usado (y los demás tokens de restablecimiento del usuario, invalidados), la contraseña se sustituye, **todas las sesiones del usuario se revocan** con motivo `PASSWORD_RESET`, se registra el aviso por email y se audita. No inicia sesión.
+- **400:** `INVALID_OR_EXPIRED_TOKEN` — token inexistente, usado o caducado, sin distinguirlos, sin cambiar nada; `VALIDATION_ERROR` si el cuerpo no es válido.
+- **403:** `CSRF_INVALID` (origen no permitido).
+- **429:** `RATE_LIMITED` por IP: cada petición calcula el hash Argon2id de la contraseña nueva, exista o no el token.
+- **Auditoría:** `auth.password.reset_completed`. El aviso por email no lleva ningún token.
 
 ## Esquemas
 
@@ -213,12 +259,15 @@ Nunca se devuelven `passwordHash`, hashes de tokens ni tokens en claro.
 
 Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compartidos entre instancias; migrar a un almacén compartido antes de escalar horizontalmente, sin introducir Redis sin un ADR). El límite por cuenta se deriva de los eventos `auth.login.failed` de `audit_logs` (ADR-002), así que se guarda en PostgreSQL. La IP es la del par TCP salvo proxies listados en `API_TRUST_PROXY`; detrás del proxy web de ADR-002, y hasta que exista un proxy de borde, el límite por IP es global (SECURITY_SPEC.md §7).
 
+Los valores de verificación de email y recuperación de contraseña (decisiones P4 y P5) quedaron aprobados como definitivos el 2026-09-27.
+
 | Endpoint | Por IP | Por cuenta |
 |---|---|---|
 | `POST /api/auth/register` | 5 cada 10 min | n/a |
 | `POST /api/auth/login` | 10 cada 10 min | Retardo progresivo tras 5 intentos fallidos en 24 h (`RATE_LIMITED`, `Retry-After` exacto); ver abajo |
-| `POST /api/auth/password/forgot` | Pendiente (endpoint no implementado aún) | Pendiente |
-| `POST /api/auth/email/verification/resend` | Pendiente (endpoint no implementado aún) | Pendiente |
+| `POST /api/auth/password/forgot` | 5 cada 10 min | Retardo progresivo por email (hash del correo normalizado, también para correos inexistentes): con F solicitudes en 24 h y F ≥ 3, la siguiente espera min(30 s · 2^(F−3), 900 s) desde la última. Evaluado con bloqueo por email, como el login |
+| `POST /api/auth/password/reset` | 5 cada 10 min | n/a (el token es de un solo uso) |
+| `POST /api/auth/email/verification/resend` | 5 cada 10 min | Retardo progresivo por usuario: con F emails de verificación en 24 h (contando el del registro) y F ≥ 3, el siguiente espera min(30 s · 2^(F−3), 900 s) desde el último. Evaluado con bloqueo por usuario, como el login |
 
 ### Límite por cuenta en el login (D3)
 
@@ -256,4 +305,4 @@ Indica que la API puede atender tráfico (comprueba la conexión a la base de da
 
 ## Fuera de esta versión
 
-Gestión de usuarios por administradores, MFA, cambio de contraseña con sesión activa, verificación de email, recuperación de contraseña, `logout-all`, listado y revocación individual de sesiones (diseñados arriba, no implementados en Sprint 1B) y el resto de módulos de la spec (s.28).
+Gestión de usuarios por administradores, MFA, cambio de contraseña con sesión activa y el resto de módulos de la spec (s.28).

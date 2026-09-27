@@ -48,6 +48,8 @@ can(actor, action, resource?) -> Decision
 
 En el Sprint 1 la matriz solo cubre acciones de autenticación y del propio usuario (por ejemplo `session:list`, `session:revoke`, `user:read` sobre sí mismo). Las acciones sobre casos, documentos, pagos y demás se añaden con cada fase, junto con sus tests.
 
+*(Nota 2026-09-27, Sprint 1B; no cambia la decisión.)* Implementadas `user:read`, `session:list` y `session:revoke` sobre el propio usuario (`GET /api/auth/me`, `GET /api/auth/sessions`, `DELETE /api/auth/sessions/:sessionId`, `POST /api/auth/logout-all`). Las consultas y revocaciones filtran por el usuario en el repositorio, y la sesión de otro usuario, inexistente, revocada o expirada responde 404, con tests de acceso cruzado. En la base de datos, el rol de aplicación tiene solo los permisos que usa la API (`DATABASE_SPEC.md`).
+
 ### Asignación de roles
 
 - El registro público crea únicamente `USER`.

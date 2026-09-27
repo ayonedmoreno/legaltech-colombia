@@ -1,8 +1,8 @@
 # SECURITY_SPEC.md
 
-**Versión:** 0.1 (línea base)
-**Fecha:** 2026-09-24
-**Estado:** Borrador para aprobación
+**Versión:** 0.2 (línea base, cierre de la Fase 1)
+**Fecha:** 2026-09-27
+**Estado:** Aprobado para el cierre de la Fase 1 (2026-09-27)
 **Referencias:** `PROJECT_SPEC.md` s.26, s.27; ADR-002; ADR-003. Marcos de referencia: OWASP Top 10 y OWASP ASVS.
 
 Este documento fija la línea base de seguridad. Cada fase la amplía en el mismo cambio que introduce nuevas superficies (documentos, pagos, IA).
@@ -44,6 +44,7 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 - Secretos solo por variables de entorno; `.env` ignorado por git; `.env.example` sin valores reales.
 - Escaneo de secretos (gitleaks) y de dependencias en CI.
 - Contraseñas y tokens: solo hashes en la base de datos.
+- Base de datos con mínimo privilegio: el rol de la aplicación no es propietario de ninguna tabla, no tiene `DELETE` ni `TRUNCATE`, no accede a `_prisma_migrations` y en `audit_logs` solo lee e inserta; cada tabla nueva recibe sus permisos explícitamente en su migración (`DATABASE_SPEC.md`, «Permisos del rol de aplicación»).
 - **Redacción de logs:** contraseñas, tokens, cookies, cabeceras `Authorization` y `Set-Cookie`, y datos personales no se registran en claro.
 - Clasificación de datos: credenciales y tokens (críticos), datos personales de usuarios (sensibles), metadatos operativos (internos).
 - Retención, borrado, consentimiento y transferencia internacional de datos personales: **pendientes de validación jurídica colombiana**; hasta entonces no se codifican políticas y se minimiza la recolección.
@@ -58,8 +59,10 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 ## 8. Auditoría
 
 - `AuditLog` append-only (`DATABASE_SPEC.md`).
-- Eventos mínimos del Sprint 1: registro, login exitoso y fallido, logout, revocaciones, verificación de email, solicitud y uso de recuperación de contraseña, cambios de rol.
+- Eventos mínimos del Sprint 1: registro, login exitoso y fallido, logout, revocaciones (de una sesión propia por ID y de todas las sesiones), verificación de email, solicitud y uso de recuperación de contraseña. Los nombres exactos están en `API_SPEC.md`.
+- Los cambios de rol se auditarán cuando exista el flujo administrativo, que queda fuera del Sprint 1 (ADR-003: la matriz del Sprint 1 solo cubre acciones de autenticación y del propio usuario). Las rotaciones periódicas de sesión no se auditan (decisión P9 del Sprint 1B).
 - Sin contraseñas, tokens ni hashes en los valores registrados.
+- Cada evento de un cambio de estado se escribe en la misma transacción que el cambio: login fallido y bloqueo (D3), verificación de email, restablecimiento de contraseña, logout, revocación por ID y cierre de todas las sesiones (Sprint 1B, H1). Se guardan ambos o ninguno, y una revocación repetida o concurrente no genera un segundo evento.
 
 ## 9. Registro y observabilidad
 
@@ -92,6 +95,7 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 - [ ] Límite por IP por cliente real: borde de confianza que fija `X-Forwarded-For` y `API_TRUST_PROXY` acorde (P3). Hasta entonces el límite por IP es global y no se publica (§7).
 - [ ] Decisiones jurídicas de datos personales y términos definidas con validación colombiana.
 - [ ] Rotación y gestión de secretos en el entorno de despliegue.
+- [ ] Entrega real de email: proveedor y worker de la Fase 3 (ADR-001). En el Sprint 1B el outbox solo se despacha con un comando de desarrollo que escribe los mensajes en ficheros locales; sin esto, verificación de email y recuperación de contraseña no llegan al usuario.
 
 ## 13. Respuesta a incidentes
 

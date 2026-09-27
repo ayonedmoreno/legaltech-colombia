@@ -74,7 +74,7 @@ Navegador ──► Next.js (apps/web) ──HTTP/cookie──► API Fastify (a
 - **IA (`packages/ai`):** `LLMProvider`, `EmbeddingProvider`, `Retriever`, prompts versionados, `OutputValidator` y registro `AiRun`.
 - **Legal Engine y Pricing Engine:** paquetes TypeScript puros, sin dependencias de Prisma ni Fastify.
 - **Pagos:** `PaymentGateway`; webhook con firma verificada, consulta server-to-server e idempotencia por ID de evento.
-- **Notificaciones:** patrón outbox, email primero.
+- **Notificaciones:** patrón outbox, email primero. *(Sprint 1B, decisión C2: el outbox guarda solo la intención, nunca el token; el despacho es una función reutilizable que en el Sprint 1B invocan los tests y un comando de desarrollo, y en la Fase 3 el worker. La entrega real es una barrera antes de producción.)*
 - **Auditoría:** servicio append-only.
 - **Observabilidad y secretos:** pino con redacción, request-id, Sentry con scrubbing de PII; secretos solo por entorno.
 
@@ -133,6 +133,22 @@ Las dependencias se declaran en el `package.json` de cada workspace con rangos d
 - **Sprint 1B:** autenticación, sesiones, usuarios, RBAC, auditoría, frontend inicial y tests.
 
 No se avanza de 1A a 1B ni a fases posteriores sin aprobación explícita.
+
+**Criterio de salida de la Fase 1** *(aprobado por el responsable del producto el 2026-09-27)*
+
+La Fase 1 se da por cerrada solo cuando se cumple todo lo siguiente:
+
+1. **1A completada:** monorepo, tooling, Docker, PostgreSQL, Prisma y CI en `main`; roles de propietario y de aplicación separados.
+2. **1B implementada:** registro, login (límite por IP y retardo progresivo por cuenta), logout, `/me`, listado y revocación de sesiones propias, `logout-all`, verificación de email y su reenvío, recuperación de contraseña, rotación periódica y al iniciar sesión.
+3. **Autenticación y sesiones conformes a ADR-002:** sesión opaca guardada como hash, cookies `__Host-`, CSRF, expiración por inactividad y absoluta, revocación y barrera MFA en producción.
+4. **RBAC conforme a ADR-003:** policies puras y tests de acceso cruzado; un recurso ajeno responde 404.
+5. **Auditoría:** todos los eventos de `SECURITY_SPEC.md` §8; `audit_logs` append-only (permisos y trigger), comprobado en CI; cada evento de un cambio de estado se escribe en la misma transacción que el cambio.
+6. **Frontend inicial:** rutas en español, `/panel` protegido y vacío, CSP con nonce.
+7. **Tests y CI:** CI verde en `main` en el commit de cierre: formato, lint, typecheck, tests, build, `migrate deploy` con comprobación de deriva, append-only, integración PostgreSQL como rol de aplicación y gitleaks.
+8. **Migraciones y esquema coherentes:** sin deriva; `DATABASE_SPEC.md` al día; rol de aplicación con mínimo privilegio, comprobado por test.
+9. **Documentación aprobada:** `API_SPEC.md`, `SECURITY_SPEC.md` y `DATABASE_SPEC.md` en su versión de cierre, con los valores P4/P5 aprobados.
+10. **Sin hallazgos de seguridad críticos o altos abiertos;** los aceptados quedan listados con su barrera en `SECURITY_SPEC.md` §12 (IP global hasta P3, MFA, entrega real de email).
+11. **Aprobación explícita del responsable del proyecto,** registrada con fecha y commit de cierre.
 
 **Fuera de alcance por ahora:** Cases, Documents, OCR, Pricing, Payments, Legal AI, RAG, workflow profesional y workflow administrativo completo.
 

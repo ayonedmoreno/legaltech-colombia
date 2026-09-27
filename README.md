@@ -5,10 +5,14 @@ LegalTech platform for traffic and transport infractions in Colombia.
 - Source of truth: [`docs/PROJECT_SPEC.md`](docs/PROJECT_SPEC.md).
 - Architecture: [`docs/ARCHITECTURE_REPORT.md`](docs/ARCHITECTURE_REPORT.md) and the ADRs in
   [`docs/adr`](docs/adr).
-- Status: **Phase 1** (Sprint 1B authentication slice: register, login, session, CSRF, `/me`,
-  logout; plus the web `/login`, `/register` and protected empty `/dashboard`, the auth policy and
-  the development seed). No email verification, password reset, MFA, or business features (Cases,
-  Documents, Pricing, Payments, Legal AI) yet.
+- Status: **Phase 1 completed** (closure approved on 2026-09-27; exit criterion in
+  `docs/ARCHITECTURE_REPORT.md` §5). Sprint 1B authentication slice: register, login, session, CSRF, `/me`,
+  logout, listing and revoking one's own sessions, logging out of all sessions, email verification
+  and its resend, password recovery, periodic session rotation; plus the web `/iniciar-sesion`,
+  `/registro`, `/verificar-correo`, `/recuperar-contrasena`, `/restablecer-contrasena` and the
+  protected empty `/panel`, the auth policy and the development seed. Emails go through an outbox;
+  in development `pnpm email:dispatch` writes them to `.dev-mail/` (real delivery arrives with the
+  Phase 3 worker). No MFA or business features (Cases, Documents, Pricing, Payments, Legal AI) yet.
 
 ## Prerequisites
 
@@ -44,6 +48,7 @@ Optional: `pnpm db:seed` creates the development internal accounts (`PROFESSIONA
 | `pnpm db:up` / `db:down`                        | Start / stop local PostgreSQL                       |
 | `pnpm db:validate` / `db:migrate` / `db:deploy` | Prisma validate / dev migration / deploy            |
 | `pnpm db:seed`                                  | Development internal accounts (never in production) |
+| `pnpm email:dispatch`                           | Sends pending outbox emails to `.dev-mail/` (dev)   |
 
 Run `pnpm format` once after the first install and commit the result before opening the first PR.
 
@@ -51,8 +56,8 @@ Run `pnpm format` once after the first install and commit the result before open
 
 ```
 apps/
-  api/        Fastify API (modular monolith). Modules: health, auth (users, audit-as-a-module reserved)
-  web/        Next.js frontend: /login, /register, protected /dashboard; /api/* proxied to the API
+  api/        Fastify API (modular monolith). Modules: health, auth, notifications (email outbox)
+  web/        Next.js frontend: auth pages (Spanish routes), protected /panel; /api/* proxied to the API
 packages/
   contracts/       Shared Zod schemas and types
   database/        Prisma schema, migrations, client (identity slice only)
@@ -73,7 +78,8 @@ Dependency rules (ADR-001) are enforced by lint: only `packages/database` import
 - Dependencies use major-version ranges (`^X`); `pnpm-lock.yaml` pins exact versions.
 - Prisma 6 (`prisma-client-js`). Moving to a newer major is a separate, reviewed change.
 - Two database roles: owner (migrations, `DATABASE_MIGRATION_URL`) and application (runtime,
-  `DATABASE_URL`). The application role cannot modify `audit_logs`.
+  `DATABASE_URL`). The application role cannot modify `audit_logs`. Since Sprint 1B it has only the
+  privileges the API uses, granted table by table in the migrations (DATABASE_SPEC.md).
 - Migrations are hand-written SQL kept equivalent to `schema.prisma`; CI runs `prisma migrate diff`
   to detect drift.
 - pgvector is not installed; it is reserved for the Legal AI/RAG phase.
@@ -105,6 +111,8 @@ Dependency rules (ADR-001) are enforced by lint: only `packages/database` import
   though MFA itself is not implemented: it blocks those roles when `NODE_ENV=production`. `NODE_ENV`
   is required (no default): the API refuses to start without it, so the barrier cannot be switched
   off by omission (ADR-002, D1).
+- Revocations (logout, one session by id, logout-all) write their audit event in the same
+  transaction as the revocation, only when something was revoked: both or neither.
 - Per-IP limits are in-memory (`FixedWindowRateLimiter`), a known, documented limitation
   (SECURITY_SPEC.md §7). Per-account login throttling is derived from failed-login events in
   `audit_logs` (ADR-002), so it is stored in PostgreSQL.
@@ -127,9 +135,10 @@ Dependency rules (ADR-001) are enforced by lint: only `packages/database` import
 - **Development seed (ADR-003).** `apps/api/src/scripts/seed-internal-users.ts` (in the API so it reuses
   its Argon2id parameters; no new dependency). Refuses unless `NODE_ENV` is explicitly `development`
   or `test`, never changes existing accounts, and audits `user.seeded`.
-- **Web.** Forms call the API through the proxy; `/dashboard` checks the session on the server
-  against `/api/auth/me` and redirects to `/login` otherwise. The web app imports only types from
-  `@legaltech/contracts`.
+- **Web.** Forms call the API through the proxy; `/panel` checks the session on the server
+  against `/api/auth/me` and redirects to `/iniciar-sesion` otherwise. The web app imports only
+  types from `@legaltech/contracts`. Routes visible to users are in Spanish; code, database and API
+  stay in English (PROJECT_SPEC s.39, ARCHITECTURE_REPORT D4).
 - **CSP.** Per-request nonce set by `apps/web/src/middleware.ts` (SECURITY_SPEC.md §4); every page is
   rendered dynamically so it carries its nonce.
 
