@@ -206,6 +206,208 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
       expect(second?.revokedReason).toBe("LOGOUT");
       expect(second?.revokedAt?.getTime()).toBe(first?.revokedAt?.getTime());
     });
+
+    it("listActiveSessions returns only the user's valid sessions, most recently used first", async () => {
+      const user = await newUser();
+      const other = await newUser();
+      const now = new Date();
+      const minutesAgo = (m: number) => new Date(now.getTime() - m * MINUTE_MS);
+      const later = new Date(now.getTime() + 60 * MINUTE_MS);
+
+      const older = await repository.createSession(
+        sessionInput(user.id, { lastSeenAt: minutesAgo(10), ip: "2001:db8::1", userAgent: "old" }),
+      );
+      const newer = await repository.createSession(
+        sessionInput(user.id, { lastSeenAt: minutesAgo(1), userAgent: "new" }),
+      );
+      const revoked = await repository.createSession(sessionInput(user.id));
+      await repository.revokeSession(revoked.id, "LOGOUT");
+      await repository.createSession(sessionInput(user.id, { idleExpiresAt: minutesAgo(1) }));
+      await repository.createSession(
+        sessionInput(user.id, { idleExpiresAt: later, absoluteExpiresAt: minutesAgo(1) }),
+      );
+      await repository.createSession(sessionInput(other.id));
+
+      const listed = await repository.listActiveSessions(user.id, now);
+
+      expect(listed.map((s) => s.id)).toEqual([newer.id, older.id]);
+      expect(listed[1]).toMatchObject({ userId: user.id, ip: "2001:db8::1", userAgent: "old" });
+      expect(listed[0]?.ip).toBe("203.0.113.7");
+      expect(await repository.listActiveSessions(randomUUID(), now)).toEqual([]);
+    });
+
+    it("revokeOwnSession revokes only the user's own valid session, once", async () => {
+      const user = await newUser();
+      const other = await newUser();
+      const now = new Date();
+      const own = sessionInput(user.id);
+      const ownSession = await repository.createSession(own);
+      const foreign = sessionInput(other.id);
+      const foreignSession = await repository.createSession(foreign);
+      const expired = await repository.createSession(
+        sessionInput(user.id, { idleExpiresAt: new Date(now.getTime() - MINUTE_MS) }),
+      );
+
+      expect(await repository.revokeOwnSession(foreignSession.id, user.id, now, "LOGOUT")).toBe(
+        false,
+      );
+      expect(await repository.revokeOwnSession(expired.id, user.id, now, "LOGOUT")).toBe(false);
+      expect(await repository.revokeOwnSession(randomUUID(), user.id, now, "LOGOUT")).toBe(false);
+      expect((await repository.findSessionByTokenHash(foreign.tokenHash))?.revokedAt).toBeNull();
+
+      expect(await repository.revokeOwnSession(ownSession.id, user.id, now, "LOGOUT")).toBe(true);
+      const revoked = await repository.findSessionByTokenHash(own.tokenHash);
+      expect(revoked?.revokedReason).toBe("LOGOUT");
+      expect(revoked?.revokedAt).toBeInstanceOf(Date);
+
+      // A second revocation changes nothing: one-way, first reason and time kept.
+      expect(await repository.revokeOwnSession(ownSession.id, user.id, now, "LOGOUT_ALL")).toBe(
+        false,
+      );
+      const again = await repository.findSessionByTokenHash(own.tokenHash);
+      expect(again?.revokedReason).toBe("LOGOUT");
+      expect(again?.revokedAt?.getTime()).toBe(revoked?.revokedAt?.getTime());
+    });
+
+    it("revokeAllOwnSessions revokes all of the user's unrevoked sessions and nobody else's", async () => {
+      const user = await newUser();
+      const other = await newUser();
+      const now = new Date();
+      const live = [sessionInput(user.id), sessionInput(user.id)];
+      for (const input of live) await repository.createSession(input);
+      const expired = sessionInput(user.id, { idleExpiresAt: new Date(now.getTime() - MINUTE_MS) });
+      await repository.createSession(expired);
+      const earlier = sessionInput(user.id);
+      const earlierSession = await repository.createSession(earlier);
+      await repository.revokeSession(earlierSession.id, "LOGOUT");
+      const firstRevokedAt = (await repository.findSessionByTokenHash(earlier.tokenHash))
+        ?.revokedAt;
+      const foreign = sessionInput(other.id);
+      await repository.createSession(foreign);
+
+      expect(await repository.revokeAllOwnSessions(user.id, "LOGOUT_ALL")).toBe(3);
+
+      for (const input of [...live, expired]) {
+        expect((await repository.findSessionByTokenHash(input.tokenHash))?.revokedReason).toBe(
+          "LOGOUT_ALL",
+        );
+      }
+      const earlierAfter = await repository.findSessionByTokenHash(earlier.tokenHash);
+      expect(earlierAfter?.revokedReason).toBe("LOGOUT");
+      expect(earlierAfter?.revokedAt?.getTime()).toBe(firstRevokedAt?.getTime());
+      expect((await repository.findSessionByTokenHash(foreign.tokenHash))?.revokedAt).toBeNull();
+      // Nothing left to revoke: a second call changes nothing.
+      expect(await repository.revokeAllOwnSessions(user.id, "LOGOUT_ALL")).toBe(0);
+    });
+  });
+
+  describe("revocation and its audit event in one transaction (H1)", () => {
+    function revocationAudit(userId: string, entityId: string, action: string) {
+      return {
+        actorUserId: userId,
+        actorRole: "USER" as const,
+        action,
+        entityType: "Session",
+        entityId,
+        requestId: randomUUID(),
+        ip: "203.0.113.7",
+        userAgent: "integration-test",
+      };
+    }
+
+    const eventCount = (action: string, entityId: string) =>
+      prisma.auditLog.count({ where: { action, entityId } });
+
+    // Each method, with the arguments that revoke the given session (entityId is the session,
+    // or the user for logout-all, as the service writes it).
+    const methods = [
+      {
+        name: "revokeSession (logout)",
+        action: "auth.logout",
+        entity: (s: { id: string; userId: string }) => s.id,
+        revoke: (s: { id: string; userId: string }, reason: string, audit?: object) =>
+          repository.revokeSession(s.id, reason as never, audit as never),
+      },
+      {
+        name: "revokeOwnSession (DELETE)",
+        action: "auth.session.revoked",
+        entity: (s: { id: string; userId: string }) => s.id,
+        revoke: (s: { id: string; userId: string }, reason: string, audit?: object) =>
+          repository.revokeOwnSession(s.id, s.userId, new Date(), reason as never, audit as never),
+      },
+      {
+        name: "revokeAllOwnSessions (logout-all)",
+        action: "auth.logout_all",
+        entity: (s: { id: string; userId: string }) => s.userId,
+        revoke: (s: { id: string; userId: string }, reason: string, audit?: object) =>
+          repository.revokeAllOwnSessions(s.userId, reason as never, audit as never),
+      },
+    ];
+
+    for (const method of methods) {
+      describe(method.name, () => {
+        async function newSession() {
+          const user = await newUser();
+          const input = sessionInput(user.id);
+          const session = await repository.createSession(input);
+          return { session: { id: session.id, userId: user.id }, tokenHash: input.tokenHash };
+        }
+
+        it("a failing audit write rolls the revocation back", async () => {
+          const { session, tokenHash } = await newSession();
+          const entityId = method.entity(session);
+          // An invalid inet value makes the INSERT fail inside the transaction.
+          const audit = { ...revocationAudit(session.userId, entityId, method.action), ip: "x" };
+
+          await expect(method.revoke(session, "LOGOUT", audit)).rejects.toThrow();
+
+          expect((await repository.findSessionByTokenHash(tokenHash))?.revokedAt).toBeNull();
+          expect(await eventCount(method.action, entityId)).toBe(0);
+        });
+
+        it("a failing revocation writes no event", async () => {
+          const { session, tokenHash } = await newSession();
+          const entityId = method.entity(session);
+          const audit = revocationAudit(session.userId, entityId, method.action);
+
+          await expect(method.revoke(session, "NOT_A_REASON", audit)).rejects.toThrow();
+
+          expect((await repository.findSessionByTokenHash(tokenHash))?.revokedAt).toBeNull();
+          expect(await eventCount(method.action, entityId)).toBe(0);
+        });
+
+        it("on success both are kept together", async () => {
+          const { session, tokenHash } = await newSession();
+          const entityId = method.entity(session);
+          const audit = revocationAudit(session.userId, entityId, method.action);
+
+          expect(await method.revoke(session, "LOGOUT", audit)).toBeTruthy();
+
+          expect((await repository.findSessionByTokenHash(tokenHash))?.revokedReason).toBe(
+            "LOGOUT",
+          );
+          expect(await eventCount(method.action, entityId)).toBe(1);
+        });
+
+        it("concurrent revocations write a single event", async () => {
+          const { session } = await newSession();
+          const entityId = method.entity(session);
+
+          const results = await Promise.all(
+            Array.from({ length: 5 }, () =>
+              method.revoke(
+                session,
+                "LOGOUT",
+                revocationAudit(session.userId, entityId, method.action),
+              ),
+            ),
+          );
+
+          expect(results.filter(Boolean)).toHaveLength(1);
+          expect(await eventCount(method.action, entityId)).toBe(1);
+        });
+      });
+    }
   });
 
   describe("audit log", () => {

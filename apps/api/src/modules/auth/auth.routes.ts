@@ -1,11 +1,21 @@
 import { isIP } from "node:net";
 import type {
+  AcceptedResponse,
   CsrfResponse,
   LoginResponse,
   MeResponse,
   RegisterResponse,
+  RotateSessionResponse,
+  SessionsResponse,
 } from "@legaltech/contracts";
-import { loginRequestSchema, registerRequestSchema } from "@legaltech/contracts";
+import {
+  loginRequestSchema,
+  registerRequestSchema,
+  forgotPasswordRequestSchema,
+  resetPasswordRequestSchema,
+  revokeSessionParamsSchema,
+  verifyEmailRequestSchema,
+} from "@legaltech/contracts";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import type { ZodError } from "zod";
 import { HttpError } from "../../common/http-error.js";
@@ -18,8 +28,10 @@ import {
   setCsrfCookie,
   setSessionCookies,
 } from "./auth.cookies.js";
+import { FORGOT_IP_LIMIT, RESEND_IP_LIMIT, RESET_IP_LIMIT } from "./auth.email-settings.js";
 import { isSameOrigin } from "./auth.origin.js";
 import type { AuthService, RequestContext } from "./auth.service.js";
+import type { SessionRecord } from "./auth.types.js";
 
 export interface AuthRouteDeps {
   authService: AuthService;
@@ -92,6 +104,9 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
   // exactly the class of bug a shared global would invite here.
   const registerIpLimiter = new FixedWindowRateLimiter(5, 10 * 60 * 1000);
   const loginIpLimiter = new FixedWindowRateLimiter(10, 10 * 60 * 1000);
+  const resendIpLimiter = new FixedWindowRateLimiter(RESEND_IP_LIMIT.max, RESEND_IP_LIMIT.windowMs);
+  const forgotIpLimiter = new FixedWindowRateLimiter(FORGOT_IP_LIMIT.max, FORGOT_IP_LIMIT.windowMs);
+  const resetIpLimiter = new FixedWindowRateLimiter(RESET_IP_LIMIT.max, RESET_IP_LIMIT.windowMs);
 
   app.get("/csrf", async (request, reply) => {
     const sessionRaw = readSessionToken(request);
@@ -135,7 +150,12 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
     const parsed = loginRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
 
-    const result = await authService.login(parsed.data, requestContext(request));
+    // The session this browser already holds, if any, is revoked once the new one exists (P12).
+    const result = await authService.login(
+      parsed.data,
+      requestContext(request),
+      readSessionToken(request),
+    );
     setSessionCookies(reply, { sessionRaw: result.sessionRaw, csrfRaw: result.csrfRaw });
     const body: LoginResponse = { user: result.user };
     return reply.send(body);
@@ -146,10 +166,117 @@ export const authRoutes: FastifyPluginAsync<AuthRouteDeps> = async (
     return reply.send(body);
   });
 
+  app.get("/sessions", async (request, reply) => {
+    const body: SessionsResponse = {
+      sessions: await authService.listOwnSessions(readSessionToken(request)),
+    };
+    return reply.send(body);
+  });
+
   app.post("/logout", async (request, reply) => {
     await requireCsrfIfSessionValid(request, authService, appOrigin);
     await authService.logout(readSessionToken(request), requestContext(request));
     clearSessionCookies(reply);
+    return reply.code(204).send();
+  });
+
+  app.post("/email/verify", async (request, reply) => {
+    // A request made before having a session, like register and login: Origin, no CSRF token.
+    requireSameOrigin(request, appOrigin);
+    const parsed = verifyEmailRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw validationError(parsed.error);
+
+    await authService.verifyEmail(parsed.data.token, requestContext(request));
+    return reply.code(204).send();
+  });
+
+  app.post("/email/verification/resend", async (request, reply) => {
+    const current = await authService.currentUser(readSessionToken(request));
+    if (!current) {
+      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
+    }
+    requireCsrf(request, authService, current.session, appOrigin);
+    // As for login (ADR-002 D3): the per-IP limit first, then the per-account one.
+    enforceIpLimit(resendIpLimiter, request);
+
+    await authService.resendEmailVerification(current);
+    const body: AcceptedResponse = { status: "accepted" };
+    return reply.code(202).send(body);
+  });
+
+  app.post("/password/forgot", async (request, reply) => {
+    // Before having a session, like register and login: Origin, then the per-IP limit.
+    requireSameOrigin(request, appOrigin);
+    enforceIpLimit(forgotIpLimiter, request);
+    const parsed = forgotPasswordRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw validationError(parsed.error);
+
+    await authService.forgotPassword(parsed.data, requestContext(request));
+    // The same answer whether or not the address is registered (ADR-002).
+    const body: AcceptedResponse = { status: "accepted" };
+    return reply.code(202).send(body);
+  });
+
+  app.post("/password/reset", async (request, reply) => {
+    requireSameOrigin(request, appOrigin);
+    enforceIpLimit(resetIpLimiter, request);
+    const parsed = resetPasswordRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw validationError(parsed.error);
+
+    await authService.resetPassword(parsed.data, requestContext(request));
+    return reply.code(204).send();
+  });
+
+  app.post("/session/rotate", async (request, reply) => {
+    const current = await authService.currentUser(readSessionToken(request));
+    if (!current) {
+      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
+    }
+    requireCsrf(request, authService, current.session, appOrigin);
+
+    const result = await authService.rotateSession(current, requestContext(request));
+    if (result.rotated) {
+      setSessionCookies(reply, { sessionRaw: result.sessionRaw, csrfRaw: result.csrfRaw });
+    }
+    const body: RotateSessionResponse = { rotated: result.rotated };
+    return reply.send(body);
+  });
+
+  app.post("/logout-all", async (request, reply) => {
+    // Unlike /logout, this needs a valid session: there is nothing to act on without one.
+    const current = await authService.currentUser(readSessionToken(request));
+    if (!current) {
+      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
+    }
+    requireCsrf(request, authService, current.session, appOrigin);
+
+    await authService.logoutAll(current, requestContext(request));
+    // The current session is among those revoked.
+    clearSessionCookies(reply);
+    return reply.code(204).send();
+  });
+
+  app.delete("/sessions/:sessionId", async (request, reply) => {
+    // Authentication and CSRF come first, so nothing about the target session is revealed to a
+    // request that is not allowed to act at all.
+    const current = await authService.currentUser(readSessionToken(request));
+    if (!current) {
+      throw new HttpError(401, "UNAUTHENTICATED", "Se requiere autenticación.");
+    }
+    requireCsrf(request, authService, current.session, appOrigin);
+
+    // A malformed id cannot name any session: the same 404 as an unknown or foreign one.
+    const params = revokeSessionParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      throw new HttpError(404, "NOT_FOUND", "Recurso no encontrado.");
+    }
+
+    const { revokedCurrent } = await authService.revokeOwnSession(
+      current,
+      params.data.sessionId,
+      requestContext(request),
+    );
+    if (revokedCurrent) clearSessionCookies(reply);
     return reply.code(204).send();
   });
 };
@@ -166,9 +293,21 @@ async function requireCsrfIfSessionValid(
 ): Promise<void> {
   const current = await authService.currentUser(readSessionToken(request));
   if (!current) return;
+  requireCsrf(request, authService, current.session, appOrigin);
+}
 
+/**
+ * CSRF for a mutating request made with a valid session (API_SPEC.md): same Origin (or Referer)
+ * and the session's CSRF token in the `X-CSRF-Token` header, or 403 `CSRF_INVALID`.
+ */
+function requireCsrf(
+  request: FastifyRequest,
+  authService: AuthService,
+  session: SessionRecord,
+  appOrigin: string,
+): void {
   requireSameOrigin(request, appOrigin);
-  if (!authService.verifyCsrf(current.session, readCsrfHeader(request))) {
+  if (!authService.verifyCsrf(session, readCsrfHeader(request))) {
     throw new HttpError(403, "CSRF_INVALID", "Token CSRF inválido o ausente.");
   }
 }

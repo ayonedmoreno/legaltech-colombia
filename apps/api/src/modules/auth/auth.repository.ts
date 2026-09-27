@@ -1,11 +1,14 @@
 import { Prisma, type PrismaClient } from "@legaltech/database";
+import { enqueueEmail } from "../notifications/outbox.repository.js";
 import { DuplicateEmailError, LoginAttemptUnavailableError } from "./auth.types.js";
 import type {
   AuditLogEntry,
   AuthRepository,
   CreateSessionInput,
   CreateUserInput,
+  EmailVerificationResendScope,
   LoginAttemptScope,
+  PasswordResetRequestScope,
   SessionRecord,
   TouchSessionInput,
   UserRecord,
@@ -14,6 +17,12 @@ import type { SessionRevokedReason } from "@legaltech/database";
 
 /** Advisory-lock namespace of the per-account login limit (ADR-002, D3): "LOGN". */
 export const LOGIN_LOCK_NAMESPACE = 0x4c4f474e;
+
+/** Advisory-lock namespace of the per-user verification-email resend limit: "RSND". */
+export const EMAIL_RESEND_LOCK_NAMESPACE = 0x52534e44;
+
+/** Advisory-lock namespace of the per-email password reset request limit: "PWRS". */
+export const PASSWORD_RESET_LOCK_NAMESPACE = 0x50575253;
 
 /**
  * 32-bit advisory-lock key for an email hash: its first 8 hex digits, as a signed int4. Two
@@ -92,12 +101,181 @@ export class PrismaAuthRepository implements AuthRepository {
     }
   }
 
+  async createUserWithEmailVerification(input: CreateUserInput): Promise<UserRecord> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({ data: input });
+        await enqueueEmail(tx, "EMAIL_VERIFICATION", user.id);
+        return user;
+      });
+    } catch (error) {
+      // As in createUser: a P2002 here can only be the email registered concurrently.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new DuplicateEmailError();
+      }
+      throw error;
+    }
+  }
+
+  async consumeEmailVerificationToken(
+    tokenHash: string,
+    audit?: (user: UserRecord) => AuditLogEntry,
+  ): Promise<string | null> {
+    return this.prisma.$transaction(async (tx) => {
+      // One conditional statement: two requests with the same token cannot both use it.
+      const [token] = await tx.$queryRaw<Array<{ user_id: string; now: Date }>>`
+        UPDATE email_verification_tokens
+        SET used_at = clock_timestamp()
+        WHERE token_hash = ${tokenHash} AND used_at IS NULL AND expires_at > clock_timestamp()
+        RETURNING user_id, used_at AS now`;
+      if (!token) return null;
+      await tx.user.updateMany({
+        where: { id: token.user_id, emailVerifiedAt: null },
+        data: { emailVerifiedAt: token.now },
+      });
+      if (audit) {
+        const user = await tx.user.findUniqueOrThrow({ where: { id: token.user_id } });
+        await tx.auditLog.create({ data: { ...auditLogData(audit(user)), occurredAt: token.now } });
+      }
+      return token.user_id;
+    });
+  }
+
+  async runEmailVerificationResend<T>(
+    userId: string,
+    windowMs: number,
+    attempt: (scope: EmailVerificationResendScope) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${EMAIL_RESEND_LOCK_NAMESPACE}::int, ${loginLockKey(userId.replace(/-/g, ""))}::int)`;
+        const [row] = await tx.$queryRaw<
+          Array<{ emails: number; last_email: Date | null; now: Date }>
+        >`
+        WITH t AS (SELECT clock_timestamp() AS now)
+        SELECT f.emails, f.last_email, t.now
+        FROM t, LATERAL (
+          SELECT count(*)::int AS emails, max(created_at) AS last_email
+          FROM email_outbox
+          WHERE user_id = ${userId}::uuid
+            AND kind = 'EMAIL_VERIFICATION'
+            AND created_at > t.now - make_interval(secs => ${windowMs / 1000}::float8)
+        ) f`;
+        return attempt({
+          recentEmails: row!.emails,
+          lastEmailAt: row!.last_email,
+          now: row!.now,
+          enqueueVerificationEmail: async () => {
+            await tx.emailOutbox.create({
+              data: { kind: "EMAIL_VERIFICATION", userId, createdAt: row!.now },
+            });
+          },
+        });
+      }, LOGIN_TRANSACTION_OPTIONS);
+    } catch (error) {
+      // Same classification as the login attempt (ADR-002 D3, S-3): 503, never granted.
+      if (isLoginAttemptUnavailable(error)) throw new LoginAttemptUnavailableError();
+      throw error;
+    }
+  }
+
+  async runPasswordResetRequest<T>(
+    emailHash: string,
+    windowMs: number,
+    attempt: (scope: PasswordResetRequestScope) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PASSWORD_RESET_LOCK_NAMESPACE}::int, ${loginLockKey(emailHash)}::int)`;
+        const [row] = await tx.$queryRaw<
+          Array<{ requests: number; last_request: Date | null; now: Date }>
+        >`
+          WITH t AS (SELECT clock_timestamp() AS now)
+          SELECT f.requests, f.last_request, t.now
+          FROM t, LATERAL (
+            SELECT count(*)::int AS requests, max(occurred_at) AS last_request
+            FROM audit_logs
+            WHERE action = 'auth.password.reset_requested'
+              AND metadata ->> 'emailHash' = ${emailHash}
+              AND occurred_at > t.now - make_interval(secs => ${windowMs / 1000}::float8)
+          ) f`;
+        const now = row!.now;
+        return attempt({
+          recentRequests: row!.requests,
+          lastRequestAt: row!.last_request,
+          now,
+          findUserByEmail: (email) => tx.user.findUnique({ where: { email } }),
+          writeAuditLog: async (entry) => {
+            await tx.auditLog.create({ data: { ...auditLogData(entry), occurredAt: now } });
+          },
+          enqueuePasswordResetEmail: async (userId) => {
+            await tx.emailOutbox.create({
+              data: { kind: "PASSWORD_RESET", userId, createdAt: now },
+            });
+          },
+        });
+      }, LOGIN_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (isLoginAttemptUnavailable(error)) throw new LoginAttemptUnavailableError();
+      throw error;
+    }
+  }
+
+  async resetPassword(input: {
+    tokenHash: string;
+    passwordHash: string;
+    audit: (user: UserRecord) => AuditLogEntry;
+  }): Promise<UserRecord | null> {
+    return this.prisma.$transaction(async (tx) => {
+      // One conditional statement: two requests with the same token cannot both use it.
+      const [token] = await tx.$queryRaw<Array<{ user_id: string; now: Date }>>`
+        UPDATE password_reset_tokens
+        SET used_at = clock_timestamp()
+        WHERE token_hash = ${input.tokenHash} AND used_at IS NULL AND expires_at > clock_timestamp()
+        RETURNING user_id, used_at AS now`;
+      if (!token) return null;
+
+      const user = await tx.user.update({
+        where: { id: token.user_id },
+        data: { passwordHash: input.passwordHash },
+      });
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: token.now },
+      });
+      await tx.session.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: token.now, revokedReason: "PASSWORD_RESET" },
+      });
+      await enqueueEmail(tx, "PASSWORD_RESET_COMPLETED", user.id);
+      await tx.auditLog.create({
+        data: { ...auditLogData(input.audit(user)), occurredAt: token.now },
+      });
+      return user;
+    });
+  }
+
   async createSession(input: CreateSessionInput): Promise<SessionRecord> {
     return this.prisma.session.create({ data: input });
   }
 
   async findSessionByTokenHash(tokenHash: string): Promise<SessionRecord | null> {
     return this.prisma.session.findUnique({ where: { tokenHash } });
+  }
+
+  async listActiveSessions(userId: string, now: Date): Promise<SessionRecord[]> {
+    return this.prisma.session.findMany({
+      where: {
+        userId,
+        revokedAt: null,
+        rotatedAt: null,
+        idleExpiresAt: { gt: now },
+        absoluteExpiresAt: { gt: now },
+      },
+      orderBy: [{ lastSeenAt: "desc" }, { id: "asc" }],
+    });
   }
 
   async touchSession(id: string, patch: TouchSessionInput): Promise<void> {
@@ -108,12 +286,90 @@ export class PrismaAuthRepository implements AuthRepository {
     await this.prisma.session.update({ where: { id }, data: { csrfTokenHash } });
   }
 
-  async revokeSession(id: string, reason: SessionRevokedReason): Promise<void> {
-    // Only ever revoke a session that is not already revoked: revocation is a one-way
-    // transition and the reason for the first revocation must not be overwritten.
-    await this.prisma.session.updateMany({
-      where: { id, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: reason },
+  async revokeSession(
+    id: string,
+    reason: SessionRevokedReason,
+    audit?: AuditLogEntry,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      // Only ever revoke a session that is not already revoked: revocation is a one-way
+      // transition and the reason for the first revocation must not be overwritten.
+      const { count } = await tx.session.updateMany({
+        where: { id, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: reason },
+      });
+      if (count === 1 && audit) await tx.auditLog.create({ data: auditLogData(audit) });
+      return count === 1;
+    });
+  }
+
+  async revokeOwnSession(
+    sessionId: string,
+    userId: string,
+    now: Date,
+    reason: SessionRevokedReason,
+    audit?: AuditLogEntry,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      // One conditional statement: the ownership, validity and one-way checks and the revocation
+      // cannot be separated by a concurrent request.
+      const { count } = await tx.session.updateMany({
+        where: {
+          id: sessionId,
+          userId,
+          revokedAt: null,
+          idleExpiresAt: { gt: now },
+          absoluteExpiresAt: { gt: now },
+        },
+        data: { revokedAt: new Date(), revokedReason: reason },
+      });
+      if (count === 1 && audit) await tx.auditLog.create({ data: auditLogData(audit) });
+      return count === 1;
+    });
+  }
+
+  async rotateSession(input: {
+    previousSessionId: string;
+    userId: string;
+    now: Date;
+    graceMs: number;
+    newSession: CreateSessionInput;
+  }): Promise<SessionRecord | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.session.updateMany({
+        where: {
+          id: input.previousSessionId,
+          userId: input.userId,
+          revokedAt: null,
+          rotatedAt: null,
+        },
+        data: { rotatedAt: input.now },
+      });
+      if (count !== 1) return null;
+      await tx.session.updateMany({
+        where: {
+          userId: input.userId,
+          revokedAt: null,
+          rotatedAt: { lte: new Date(input.now.getTime() - input.graceMs) },
+        },
+        data: { revokedAt: input.now, revokedReason: "ROTATED" },
+      });
+      return tx.session.create({ data: input.newSession });
+    });
+  }
+
+  async revokeAllOwnSessions(
+    userId: string,
+    reason: SessionRevokedReason,
+    audit?: AuditLogEntry,
+  ): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.session.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: reason },
+      });
+      if (count > 0 && audit) await tx.auditLog.create({ data: auditLogData(audit) });
+      return count;
     });
   }
 

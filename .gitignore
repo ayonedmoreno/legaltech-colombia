@@ -7,6 +7,9 @@ coverage/
 *.log
 .DS_Store
 
+# Development email transport output (may contain tokens; never commit)
+.dev-mail/
+
 # Environment files: never commit real values
 .env
 .env.*

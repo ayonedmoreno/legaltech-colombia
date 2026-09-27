@@ -21,7 +21,8 @@
     "db:validate": "pnpm --filter @legaltech/database run validate",
     "db:migrate": "pnpm --filter @legaltech/database run migrate:dev",
     "db:deploy": "pnpm --filter @legaltech/database run migrate:deploy",
-    "db:seed": "pnpm --filter @legaltech/api run seed:dev"
+    "db:seed": "pnpm --filter @legaltech/api run seed:dev",
+    "email:dispatch": "pnpm --filter @legaltech/api run email:dispatch"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
