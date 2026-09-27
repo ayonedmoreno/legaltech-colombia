@@ -8,6 +8,12 @@ Prisma schema, migrations and database client. Only this package may import `@pr
   - `20260924120000_init_identity`: schema equivalent to what Prisma generates from `schema.prisma`.
   - `20260924120100_identity_constraints`: manual SQL (email CHECK, append-only trigger on
     `audit_logs`, partial index, REVOKE for the application role).
+  - `20260927120000_email_outbox`: the email outbox (`email_outbox`, `email_outbox_kind`); it stores
+    the intent only, never a token.
+  - `20260927130000_app_role_least_privilege`: the application role gets only what the API uses
+    (no `DELETE`/`TRUNCATE`, nothing on `_prisma_migrations`) and no default privileges.
+- A migration that creates a table must `GRANT` the application role what it needs on it, and add
+  the table to `apps/api/src/database.privileges.integration.test.ts` (`DATABASE_SPEC.md`).
 - Any change to `schema.prisma` must come with a migration and an update to `docs/DATABASE_SPEC.md`.
 - The Prisma Client is generated only by the `generate` script, as its own Turborepo task that `build`,
   `typecheck` and `test` depend on (`turbo.json`), so it runs once per `pnpm build`/`typecheck`/`test`/`dev`

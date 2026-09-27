@@ -7,7 +7,14 @@ describe("prisma schema scope (Sprint 1 identity slice)", () => {
   it("defines only the approved identity models", () => {
     const models = [...schema.matchAll(/^model\s+(\w+)\s*\{/gm)].map((m) => m[1]);
     expect(models.sort()).toEqual(
-      ["AuditLog", "EmailVerificationToken", "PasswordResetToken", "Session", "User"].sort(),
+      [
+        "AuditLog",
+        "EmailOutbox",
+        "EmailVerificationToken",
+        "PasswordResetToken",
+        "Session",
+        "User",
+      ].sort(),
     );
   });
 
@@ -18,6 +25,11 @@ describe("prisma schema scope (Sprint 1 identity slice)", () => {
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith("@@"));
     expect(values).toEqual(["USER", "PROFESSIONAL", "ADMIN", "SUPER_ADMIN"]);
+  });
+
+  it("keeps no token column in the email outbox: it stores the intent only (ADR-002)", () => {
+    const body = /model EmailOutbox {([^}]*)}/.exec(schema)?.[1] ?? "";
+    expect(body).not.toMatch(/token/i);
   });
 
   it("does not reference pgvector", () => {

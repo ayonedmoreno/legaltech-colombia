@@ -1,6 +1,14 @@
-export { Prisma, PrismaClient, Role, SessionRevokedReason, UserStatus } from "@prisma/client";
+export {
+  EmailOutboxKind,
+  Prisma,
+  PrismaClient,
+  Role,
+  SessionRevokedReason,
+  UserStatus,
+} from "@prisma/client";
 export type {
   AuditLog,
+  EmailOutbox,
   EmailVerificationToken,
   PasswordResetToken,
   Session,

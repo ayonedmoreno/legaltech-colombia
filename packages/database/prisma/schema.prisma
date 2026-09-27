@@ -57,6 +57,7 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
   auditLogs               AuditLog[]
+  emailOutbox             EmailOutbox[]
 
   @@map("users")
 }
@@ -134,4 +135,30 @@ model AuditLog {
   @@index([action, occurredAt])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+/// Kinds of email the outbox can hold (ADR-002: email verification, password reset and the notice
+/// sent once a password has been reset).
+enum EmailOutboxKind {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  PASSWORD_RESET_COMPLETED
+
+  @@map("email_outbox_kind")
+}
+
+/// Outbox of emails to send (ARCHITECTURE_REPORT: outbox pattern). It stores only the intent:
+/// never a token or any other secret. A token an email carries is generated when the email is
+/// dispatched, and only its hash is stored, in its own table.
+model EmailOutbox {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind      EmailOutboxKind
+  userId    String          @map("user_id") @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  sentAt    DateTime?       @map("sent_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sentAt, createdAt])
+  @@map("email_outbox")
 }
