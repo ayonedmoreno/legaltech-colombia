@@ -18,7 +18,7 @@ async function appWithTestRoutes(): Promise<FastifyInstance> {
     throw error;
   });
   app.get("/api/test/http-error", async () => {
-    throw new HttpError(429, "RATE_LIMITED", "Demasiados intentos. Inténtalo más tarde.", {
+    throw new HttpError(429, "RATE_LIMITED", "Demasiadas solicitudes. Inténtalo más tarde.", {
       headers: { "Retry-After": "900" },
     });
   });
@@ -110,7 +110,7 @@ describe("error handler: HttpError", () => {
     expect(body).toEqual({
       error: {
         code: "RATE_LIMITED",
-        message: "Demasiados intentos. Inténtalo más tarde.",
+        message: "Demasiadas solicitudes. Inténtalo más tarde.",
         details: [],
         requestId: expect.any(String),
       },

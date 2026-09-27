@@ -37,7 +37,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.register` | Registro (nuevo o duplicado) | Usuario creado; sin actor si el correo ya existía | `outcome`: `created` / `duplicate` |
 | `auth.login.success` | Login correcto | Usuario | — |
 | `auth.login.failed` | Credenciales inválidas, cuenta suspendida o rol bloqueado por la barrera MFA | Usuario si existe; sin actor si el correo no existe | `emailHash` (SHA-256 del correo normalizado); `reason: mfa_required_production` si aplica |
-| `auth.login.rate_limited` *(D3, pendiente)* | Intento de login rechazado (429) por el límite por cuenta; no cuenta como fallo. No se registra por el 429 del límite por IP ni por el 503 | Sin actor | `emailHash` (SHA-256 del correo normalizado), `retryAfterSeconds` |
+| `auth.login.rate_limited` | Intento de login rechazado (429) por el límite por cuenta; no cuenta como fallo. Se escribe en la misma transacción que decide el bloqueo, con la hora de PostgreSQL. No se registra por el 429 del límite por IP ni por el 503 | Sin actor | `emailHash` (SHA-256 del correo normalizado), `retryAfterSeconds` |
 | `auth.logout` | Logout con una sesión válida | Usuario | — |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
@@ -68,7 +68,7 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 | 403 | `CSRF_INVALID` | Token CSRF ausente o inválido, u origen no permitido |
 | 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002) |
 | 404 | `NOT_FOUND` | Ruta inexistente |
-| 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); *(D3, pendiente)* mismo mensaje en ambos casos |
+| 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); mismo mensaje en ambos casos |
 | 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
 | 500 | `INTERNAL_ERROR` | Error inesperado, sin detalles internos |
 
@@ -109,9 +109,9 @@ Inicia sesión y establece las cookies de sesión y CSRF.
 - **200:** `{ "user": User }` más `Set-Cookie` de sesión y de CSRF.
 - **401:** `INVALID_CREDENTIALS` (mismo mensaje y forma para correo inexistente, contraseña errónea o cuenta suspendida)
 - **403:** `CSRF_INVALID` (origen no permitido) / `FORBIDDEN` (rol ADMIN o SUPER_ADMIN en producción sin MFA, ADR-002)
-- **429:** `RATE_LIMITED` (límite por IP o por cuenta, con `Retry-After`; *(D3, pendiente)* mismo mensaje en ambos casos)
+- **429:** `RATE_LIMITED` (límite por IP o por cuenta, con `Retry-After`; mismo mensaje en ambos casos)
 - **503:** `SERVICE_UNAVAILABLE` (no se pudo aplicar el límite por cuenta; `Retry-After: 1`; el intento no se concede)
-- **Auditoría:** `auth.login.success`, `auth.login.failed`; *(D3, pendiente)* `auth.login.rate_limited`
+- **Auditoría:** `auth.login.success`, `auth.login.failed`, `auth.login.rate_limited`
 
 ### `POST /api/auth/logout`
 
@@ -220,9 +220,7 @@ Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compart
 | `POST /api/auth/password/forgot` | Pendiente (endpoint no implementado aún) | Pendiente |
 | `POST /api/auth/email/verification/resend` | Pendiente (endpoint no implementado aún) | Pendiente |
 
-### Límite por cuenta en el login: objetivo aprobado de D3 (pendiente de implementación)
-
-> **Nota:** esta sección describe el comportamiento objetivo aprobado para D3 (ADR-002). La atomicidad (transacción, bloqueo consultivo, `lock_timeout`, tiempo de PostgreSQL y el 503) está implementada (D3-2), y también la ventana de 24 h, el retardo progresivo y el `Retry-After` exacto (D3-3). Quedan pendientes de D3-4 `auth.login.rate_limited` y el mensaje único: hasta entonces el 429 del límite por cuenta usa su mensaje propio ("Demasiados intentos. Inténtalo más tarde.") y no se audita `auth.login.rate_limited`. Esta nota y las marcas *(D3, pendiente)* se eliminan al cerrar D3.
+### Límite por cuenta en el login (D3)
 
 - **Clave:** SHA-256 del email normalizado (minúsculas, sin espacios). Se aplica igual a correos inexistentes: la respuesta no revela si la cuenta existe.
 - **Qué cuenta:** los `auth.login.failed` de las últimas 24 h: credenciales inválidas, correo inexistente, cuenta suspendida y barrera MFA de producción.
@@ -233,12 +231,11 @@ Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compart
   |---|---|---|---|---|---|---|---|
   | Espera | — | 30 s | 60 s | 120 s | 240 s | 480 s | 900 s |
 
-- **Respuesta al bloqueo:** 429 `RATE_LIMITED`, con el mismo mensaje que el límite por IP ("Demasiadas solicitudes. Inténtalo más tarde."). `Retry-After` indica los segundos que faltan hasta el siguiente intento permitido, redondeados hacia arriba y como mínimo 1. Se audita `auth.login.rate_limited`.
+- **Respuesta al bloqueo:** 429 `RATE_LIMITED`, con el mismo mensaje que el límite por IP ("Demasiadas solicitudes. Inténtalo más tarde."). `Retry-After` indica los segundos que faltan hasta el siguiente intento permitido, redondeados hacia arriba y como mínimo 1. Se audita `auth.login.rate_limited` en la misma transacción que decide el bloqueo: si la transacción se revierte, no queda el evento.
 - **Tiempo:** lo fija PostgreSQL (`clock_timestamp()` tras obtener el bloqueo), no el reloj de la API.
 - **Atomicidad:** la comprobación, la verificación y el registro del fallo forman una transacción serializada por cuenta (`pg_advisory_xact_lock`, `lock_timeout` 2 s). Si falla por bloqueo, conexión o tiempo de la transacción: 503 `SERVICE_UNAVAILABLE` ("Servicio no disponible temporalmente. Inténtalo más tarde.") con `Retry-After: 1`, sin conceder el intento y sin auditar `auth.login.rate_limited`. Cualquier otro error de base de datos sigue siendo 500.
 - **Orden con el límite por IP:** primero el límite por IP y después el de cuenta. Un 429 del límite por cuenta ya ha consumido cupo del límite por IP.
 
-Los valores numéricos se fijan al implementar y se documentan aquí.
 
 ## Infraestructura
 

@@ -74,6 +74,29 @@ function loginFailure(
   };
 }
 
+/**
+ * The `auth.login.rate_limited` event (ADR-002, D3): a login refused by the per-account limit.
+ * No actor and no entity, so it does not reveal whether the account exists; it does not count
+ * towards the limit.
+ */
+function loginRateLimited(
+  emailHash: string,
+  retryAfterSeconds: number,
+  context: RequestContext,
+): AuditLogEntry {
+  return {
+    actorUserId: null,
+    actorRole: null,
+    action: "auth.login.rate_limited",
+    entityType: null,
+    entityId: null,
+    metadata: { emailHash, retryAfterSeconds },
+    requestId: context.requestId,
+    ip: context.ip,
+    userAgent: context.userAgent,
+  };
+}
+
 /** Lowercased, trimmed form stored in the database (matches the `users_email_normalized_chk` constraint). */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -198,10 +221,10 @@ export class AuthService {
             attempt.now,
           );
           if (remainingMs > 0) {
-            return {
-              kind: "throttled",
-              retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
-            };
+            const retryAfterSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+            // Written in the attempt's transaction: it exists only if the refusal commits.
+            await attempt.writeAuditLog(loginRateLimited(emailHash, retryAfterSeconds, context));
+            return { kind: "throttled", retryAfterSeconds };
           }
 
           const user = await attempt.findUserByEmail(email);
@@ -242,7 +265,8 @@ export class AuthService {
     }
 
     if (outcome.kind === "throttled") {
-      throw new HttpError(429, "RATE_LIMITED", "Demasiados intentos. Inténtalo más tarde.", {
+      // ADR-002 (D3): the same message as the per-IP limit.
+      throw new HttpError(429, "RATE_LIMITED", "Demasiadas solicitudes. Inténtalo más tarde.", {
         headers: { "Retry-After": String(outcome.retryAfterSeconds) },
       });
     }

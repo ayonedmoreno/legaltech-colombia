@@ -40,9 +40,32 @@ describe("auth audit trail", () => {
       },
     });
 
+    // Four more failures reach the per-account limit; the next attempt is refused (D3-4).
+    for (let i = 2; i <= 5; i++) {
+      await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: json,
+        payload: { email: "ana@example.com", password: `wrong password ${i}` },
+      });
+    }
+    const refused = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      headers: json,
+      payload: { email: "ana@example.com", password: PASSWORD },
+    });
+    expect(refused.statusCode).toBe(429);
+
     const actions = new Set(repository.auditLog.map((e) => e.action));
     expect(actions).toEqual(
-      new Set(["auth.register", "auth.login.failed", "auth.login.success", "auth.logout"]),
+      new Set([
+        "auth.register",
+        "auth.login.failed",
+        "auth.login.success",
+        "auth.logout",
+        "auth.login.rate_limited",
+      ]),
     );
 
     const serialized = JSON.stringify(repository.auditLog);
@@ -51,6 +74,7 @@ describe("auth audit trail", () => {
     for (const secret of [
       PASSWORD,
       "wrong password 1",
+      "wrong password 5",
       sessionRaw,
       csrfRaw,
       user!.passwordHash,

@@ -11,6 +11,7 @@ import {
   DuplicateEmailError,
   LoginAttemptUnavailableError,
   type CreateSessionInput,
+  type LoginAttemptScope,
 } from "./auth.types.js";
 
 /**
@@ -620,6 +621,160 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
       const retryAfter = Number((blocked as HttpError).headers?.["Retry-After"]);
       expect(retryAfter).toBeGreaterThanOrEqual(18);
       expect(retryAfter).toBeLessThanOrEqual(20);
+    }, 20_000);
+
+    const storedRefusals = (emailHash: string) =>
+      prisma.auditLog.findMany({
+        where: {
+          action: "auth.login.rate_limited",
+          metadata: { path: ["emailHash"], equals: emailHash },
+        },
+        orderBy: { occurredAt: "asc" },
+      });
+
+    it.each([
+      ["an existing account", true],
+      ["an unknown email", false],
+    ])(
+      "stores one auth.login.rate_limited per refusal for %s, dated on PostgreSQL time (D3-4)",
+      async (_scenario, exists) => {
+        const email = uniqueEmail();
+        if (exists) {
+          await repository.createUser({
+            email,
+            passwordHash: await hashPassword(PASSWORD),
+            fullName: "Integración",
+          });
+        }
+        const emailHash = createHash("sha256").update(email).digest("hex");
+        const tenSecondsAgo = new Date((await databaseNow()).getTime() - 10_000);
+        for (let i = 0; i < LIMIT; i++) await backdatedFailure(emailHash, tenSecondsAgo);
+        const service = new AuthService({ repository, isProduction: false });
+
+        const refusals: Array<{ requestId: string; retryAfter: number }> = [];
+        for (let i = 0; i < 2; i++) {
+          const requestId = randomUUID();
+          const error = await service
+            .login(
+              { email, password: PASSWORD },
+              { ip: "203.0.113.7", userAgent: "integration-test", requestId },
+            )
+            .catch((caught: unknown) => caught);
+          expect(error).toBeInstanceOf(HttpError);
+          expect((error as HttpError).statusCode).toBe(429);
+          expect((error as HttpError).message).toBe("Demasiadas solicitudes. Inténtalo más tarde.");
+          refusals.push({
+            requestId,
+            retryAfter: Number((error as HttpError).headers?.["Retry-After"]),
+          });
+        }
+
+        const stored = await storedRefusals(emailHash);
+        expect(stored).toHaveLength(2);
+        stored.forEach((row, i) => {
+          expect(row).toMatchObject({
+            actorUserId: null,
+            actorRole: null,
+            entityType: null,
+            entityId: null,
+            previousValue: null,
+            newValue: null,
+            metadata: { emailHash, retryAfterSeconds: refusals[i]!.retryAfter },
+            requestId: refusals[i]!.requestId,
+            ip: "203.0.113.7",
+            userAgent: "integration-test",
+          });
+          expect(Object.keys(row.metadata as object).sort()).toEqual([
+            "emailHash",
+            "retryAfterSeconds",
+          ]);
+          // Dated with the PostgreSQL time of its own attempt: 30 s after the last failure,
+          // minus the Retry-After (rounded up) that the attempt computed.
+          const elapsed = row.occurredAt.getTime() - tenSecondsAgo.getTime();
+          expect(elapsed).toBeGreaterThanOrEqual(30_000 - refusals[i]!.retryAfter * 1_000);
+          expect(elapsed).toBeLessThan(30_000 - (refusals[i]!.retryAfter - 1) * 1_000);
+        });
+        // The refusals do not count: still five failures.
+        expect(await storedFailures(emailHash)).toBe(LIMIT);
+      },
+      20_000,
+    );
+
+    it("writes auth.login.rate_limited in the refusal's own transaction, dated with its now (D3-4)", async () => {
+      const email = uniqueEmail();
+      const emailHash = createHash("sha256").update(email).digest("hex");
+      const tenSecondsAgo = new Date((await databaseNow()).getTime() - 10_000);
+      for (let i = 0; i < LIMIT; i++) await backdatedFailure(emailHash, tenSecondsAgo);
+
+      /** Records the attempt's `now`, and keeps its transaction open a little after the attempt. */
+      class ObservedRepository extends PrismaAuthRepository {
+        attemptNow: Date | null = null;
+        override runLoginAttempt<T>(
+          hash: string,
+          windowMs: number,
+          attempt: (scope: LoginAttemptScope) => Promise<T>,
+        ): Promise<T> {
+          return super.runLoginAttempt(hash, windowMs, async (scope) => {
+            this.attemptNow = scope.now;
+            const outcome = await attempt(scope);
+            await sleep(200);
+            return outcome;
+          });
+        }
+      }
+      const observed = new ObservedRepository(prisma);
+      const service = new AuthService({ repository: observed, isProduction: false });
+
+      await service
+        .login(
+          { email, password: PASSWORD },
+          { ip: "203.0.113.7", userAgent: "integration-test", requestId: randomUUID() },
+        )
+        .catch(() => undefined);
+
+      const [event] = await storedRefusals(emailHash);
+      expect(observed.attemptNow).toBeInstanceOf(Date);
+      // Written with the transaction's own PostgreSQL time: a write after the commit would be
+      // dated at least 200 ms later.
+      expect(event?.occurredAt.getTime()).toBe(observed.attemptNow!.getTime());
+    }, 20_000);
+
+    it("keeps no auth.login.rate_limited when the refusal's transaction expires (P2028) (D3-4)", async () => {
+      const email = uniqueEmail();
+      const emailHash = createHash("sha256").update(email).digest("hex");
+      const tenSecondsAgo = new Date((await databaseNow()).getTime() - 10_000);
+      for (let i = 0; i < LIMIT; i++) await backdatedFailure(emailHash, tenSecondsAgo);
+
+      /** Lets the attempt write its event, then outlives the transaction's 5 s timeout. */
+      class ExpiringRepository extends PrismaAuthRepository {
+        override runLoginAttempt<T>(
+          hash: string,
+          windowMs: number,
+          attempt: (scope: LoginAttemptScope) => Promise<T>,
+        ): Promise<T> {
+          return super.runLoginAttempt(hash, windowMs, async (scope) => {
+            const outcome = await attempt(scope);
+            await sleep(6_000);
+            return outcome;
+          });
+        }
+      }
+      const service = new AuthService({
+        repository: new ExpiringRepository(prisma),
+        isProduction: false,
+      });
+
+      const error = await service
+        .login(
+          { email, password: PASSWORD },
+          { ip: "203.0.113.7", userAgent: "integration-test", requestId: randomUUID() },
+        )
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as HttpError).statusCode).toBe(503);
+      expect(await storedRefusals(emailHash)).toHaveLength(0);
+      expect(await storedFailures(emailHash)).toBe(LIMIT);
     }, 20_000);
 
     it("dates the failure with the PostgreSQL time read after the lock", async () => {
