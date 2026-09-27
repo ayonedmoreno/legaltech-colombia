@@ -19,7 +19,7 @@ export function LogoutButton() {
       setPending(false);
       return;
     }
-    router.replace("/login");
+    router.replace("/iniciar-sesion");
     router.refresh();
   }
 

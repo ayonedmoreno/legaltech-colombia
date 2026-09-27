@@ -1,12 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { login } from "../../lib/api-client";
+import { forgotPassword } from "../../lib/api-client";
 
-export function LoginForm() {
-  const router = useRouter();
+export function ForgotPasswordForm() {
   const [error, setError] = useState<string | null>(null);
+  const [accepted, setAccepted] = useState(false);
   const [pending, setPending] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -14,17 +13,22 @@ export function LoginForm() {
     const form = new FormData(event.currentTarget);
     setPending(true);
     setError(null);
-    const result = await login({
-      email: String(form.get("email") ?? ""),
-      password: String(form.get("password") ?? ""),
-    });
+    const result = await forgotPassword(String(form.get("email") ?? ""));
+    setPending(false);
     if (result.ok) {
-      router.replace("/dashboard");
-      router.refresh();
+      setAccepted(true);
       return;
     }
     setError(result.message);
-    setPending(false);
+  }
+
+  if (accepted) {
+    // The same message whether or not the address is registered (API_SPEC.md: no enumeration).
+    return (
+      <p role="status">
+        Si el correo está registrado, te enviaremos un enlace para restablecer tu contraseña.
+      </p>
+    );
   }
 
   return (
@@ -39,17 +43,6 @@ export function LoginForm() {
           className="rounded border border-slate-300 px-3 py-2"
         />
       </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Contraseña</span>
-        <input
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          maxLength={128}
-          className="rounded border border-slate-300 px-3 py-2"
-        />
-      </label>
       {error ? (
         <p role="alert" className="text-sm text-red-700">
           {error}
@@ -58,9 +51,9 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-slate-900 px-4 py-2 font-medium text-white disabled:opacity-60"
+        className="rounded bg-slate-900 px-3 py-2 text-white disabled:opacity-60"
       >
-        {pending ? "Ingresando…" : "Iniciar sesión"}
+        {pending ? "Enviando…" : "Enviar enlace"}
       </button>
     </form>
   );

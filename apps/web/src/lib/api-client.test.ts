@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { login, logout, register } from "./api-client";
+import {
+  forgotPassword,
+  login,
+  logout,
+  register,
+  resetPassword,
+  rotateSession,
+  verifyEmail,
+} from "./api-client";
 
 const USER = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -111,5 +119,90 @@ describe("logout", () => {
 
     expect(await logout(fetchImpl)).toEqual({ ok: true, data: undefined });
     expect(fetchImpl.mock.calls[1]![1].headers["x-csrf-token"]).toBeUndefined();
+  });
+});
+
+describe("verifyEmail", () => {
+  it("posts the token in the body to /api/auth/email/verify, never in the URL", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+
+    const result = await verifyEmail("the-token", fetchImpl);
+
+    expect(result).toEqual({ ok: true, data: undefined });
+    const [path, init] = fetchImpl.mock.calls[0]!;
+    expect(path).toBe("/api/auth/email/verify");
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(init.body)).toEqual({ token: "the-token" });
+  });
+
+  it("returns the API's message for an invalid or expired link", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        apiError(400, "INVALID_OR_EXPIRED_TOKEN", "El enlace no es válido o ha caducado."),
+      );
+
+    expect(await verifyEmail("used", fetchImpl)).toEqual({
+      ok: false,
+      status: 400,
+      message: "El enlace no es válido o ha caducado.",
+    });
+  });
+});
+
+describe("forgotPassword", () => {
+  it("posts the email to /api/auth/password/forgot and accepts the 202", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json(202, { status: "accepted" }));
+
+    expect(await forgotPassword("ana@example.com", fetchImpl)).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    const [path, init] = fetchImpl.mock.calls[0]!;
+    expect(path).toBe("/api/auth/password/forgot");
+    expect(JSON.parse(init.body)).toEqual({ email: "ana@example.com" });
+  });
+});
+
+describe("resetPassword", () => {
+  it("posts the token and the new password in the body to /api/auth/password/reset", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+
+    expect(await resetPassword("the-token", "a brand new passphrase", fetchImpl)).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    const [path, init] = fetchImpl.mock.calls[0]!;
+    expect(path).toBe("/api/auth/password/reset");
+    expect(JSON.parse(init.body)).toEqual({
+      token: "the-token",
+      newPassword: "a brand new passphrase",
+    });
+  });
+});
+
+describe("rotateSession", () => {
+  it("fetches the CSRF token, then posts it to /api/auth/session/rotate", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(json(200, { csrfToken: "csrf-1" }))
+      .mockResolvedValueOnce(json(200, { rotated: true }));
+
+    expect(await rotateSession(fetchImpl)).toEqual({ ok: true, data: { rotated: true } });
+    const [path, init] = fetchImpl.mock.calls[1]!;
+    expect(path).toBe("/api/auth/session/rotate");
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(init.headers["x-csrf-token"]).toBe("csrf-1");
+  });
+
+  it("does not post without a session (the CSRF request fails)", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(apiError(401, "UNAUTHENTICATED", "Se requiere autenticación."));
+
+    const result = await rotateSession(fetchImpl);
+
+    expect(result.ok).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

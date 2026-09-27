@@ -6,10 +6,10 @@ export default function HomePage() {
       <h1 className="text-3xl font-semibold">Plataforma LegalTech de Tránsito y Transporte</h1>
       <p className="text-slate-600">Estamos construyendo esta plataforma. Próximamente.</p>
       <nav className="flex gap-4">
-        <Link href="/login" className="underline">
+        <Link href="/iniciar-sesion" className="underline">
           Iniciar sesión
         </Link>
-        <Link href="/register" className="underline">
+        <Link href="/registro" className="underline">
           Crear cuenta
         </Link>
       </nav>

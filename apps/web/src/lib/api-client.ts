@@ -4,6 +4,7 @@ import type {
   LoginRequest,
   LoginResponse,
   RegisterRequest,
+  RotateSessionResponse,
   User,
 } from "@legaltech/contracts";
 
@@ -70,6 +71,56 @@ export function register(
   return request<void>(fetchImpl, "/api/auth/register", { method: "POST", body: input }).then(
     (result) => (result.ok ? { ok: true, data: undefined } : result),
   );
+}
+
+/**
+ * Confirms an email address with the token from its verification link (API_SPEC.md,
+ * POST /api/auth/email/verify). The token goes in the body, never in a URL (decision P14).
+ */
+export function verifyEmail(token: string, fetchImpl: Fetch = fetch): Promise<ApiResult<void>> {
+  return request<void>(fetchImpl, "/api/auth/email/verify", {
+    method: "POST",
+    body: { token },
+  }).then((result) => (result.ok ? { ok: true, data: undefined } : result));
+}
+
+/**
+ * Asks for a password reset email (API_SPEC.md, POST /api/auth/password/forgot). 202 means
+ * "accepted" whether or not the address is registered (no enumeration).
+ */
+export function forgotPassword(email: string, fetchImpl: Fetch = fetch): Promise<ApiResult<void>> {
+  return request<void>(fetchImpl, "/api/auth/password/forgot", {
+    method: "POST",
+    body: { email },
+  }).then((result) => (result.ok ? { ok: true, data: undefined } : result));
+}
+
+/** Sets a new password with the token from a reset link; the token goes in the body (P14). */
+export function resetPassword(
+  token: string,
+  newPassword: string,
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<void>> {
+  return request<void>(fetchImpl, "/api/auth/password/reset", {
+    method: "POST",
+    body: { token, newPassword },
+  }).then((result) => (result.ok ? { ok: true, data: undefined } : result));
+}
+
+/**
+ * Asks the API to rotate the session if it is due (ADR-002; POST /api/auth/session/rotate). The
+ * call goes through the web origin, so the new cookies the API may set reach the browser. The
+ * API decides whether rotation is due; this only needs to be called regularly while in use.
+ */
+export async function rotateSession(
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<RotateSessionResponse>> {
+  const csrf = await request<CsrfResponse>(fetchImpl, "/api/auth/csrf", { method: "GET" });
+  if (!csrf.ok) return csrf;
+  return request<RotateSessionResponse>(fetchImpl, "/api/auth/session/rotate", {
+    method: "POST",
+    csrfToken: csrf.data.csrfToken,
+  });
 }
 
 /** Fetches the session's CSRF token, then revokes the session with it (ADR-002). */

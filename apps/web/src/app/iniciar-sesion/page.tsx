@@ -10,8 +10,13 @@ export default function LoginPage() {
       <h1 className="text-2xl font-semibold">Iniciar sesión</h1>
       <LoginForm />
       <p className="text-sm text-slate-600">
+        <Link href="/recuperar-contrasena" className="underline">
+          ¿Olvidaste tu contraseña?
+        </Link>
+      </p>
+      <p className="text-sm text-slate-600">
         ¿No tienes cuenta?{" "}
-        <Link href="/register" className="underline">
+        <Link href="/registro" className="underline">
           Regístrate
         </Link>
       </p>

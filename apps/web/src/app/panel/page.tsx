@@ -4,21 +4,23 @@ import { redirect } from "next/navigation";
 import { resolveApiInternalUrl } from "../../config/api-proxy";
 import { SESSION_COOKIE, getCurrentUser } from "../../lib/session";
 import { LogoutButton } from "./logout-button";
+import { SessionKeeper } from "./session-keeper";
 
 export const metadata: Metadata = { title: "Panel" };
 
 /**
  * Empty, protected dashboard (Phase 1 exit criterion, ARCHITECTURE_REPORT.md). The session is
  * checked on the server against the API on every request; without a valid one the user is
- * sent to /login. Case data arrives with Phase 2.
+ * sent to /iniciar-sesion. Case data arrives with Phase 2.
  */
 export default async function DashboardPage() {
   const sessionToken = (await cookies()).get(SESSION_COOKIE)?.value;
   const user = await getCurrentUser(sessionToken, resolveApiInternalUrl(process.env));
-  if (!user) redirect("/login");
+  if (!user) redirect("/iniciar-sesion");
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-10">
+      <SessionKeeper />
       <header className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Panel</h1>
