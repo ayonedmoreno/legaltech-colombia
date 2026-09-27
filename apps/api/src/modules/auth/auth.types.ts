@@ -57,6 +57,8 @@ export class LoginAttemptUnavailableError extends Error {
 export interface LoginAttemptScope {
   /** `auth.login.failed` events for this email hash within the window, counted on PostgreSQL time. */
   recentFailures: number;
+  /** When the most recent of those failures happened (PostgreSQL time); null if there is none. */
+  lastFailureAt: Date | null;
   /** PostgreSQL `clock_timestamp()`, read after the lock was obtained. */
   now: Date;
   findUserByEmail(email: string): Promise<UserRecord | null>;

@@ -132,18 +132,22 @@ export class PrismaAuthRepository implements AuthRepository {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOGIN_LOCK_NAMESPACE}::int, ${loginLockKey(emailHash)}::int)`;
-        const [row] = await tx.$queryRaw<Array<{ failures: number; now: Date }>>`
+        const [row] = await tx.$queryRaw<
+          Array<{ failures: number; last_failure: Date | null; now: Date }>
+        >`
           WITH t AS (SELECT clock_timestamp() AS now)
-          SELECT
-            (SELECT count(*)::int FROM audit_logs
-              WHERE action = 'auth.login.failed'
-                AND metadata ->> 'emailHash' = ${emailHash}
-                AND occurred_at > t.now - make_interval(secs => ${windowMs / 1000}::float8)) AS failures,
-            t.now AS now
-          FROM t`;
+          SELECT f.failures, f.last_failure, t.now
+          FROM t, LATERAL (
+            SELECT count(*)::int AS failures, max(occurred_at) AS last_failure
+            FROM audit_logs
+            WHERE action = 'auth.login.failed'
+              AND metadata ->> 'emailHash' = ${emailHash}
+              AND occurred_at > t.now - make_interval(secs => ${windowMs / 1000}::float8)
+          ) f`;
         const now = row!.now;
         return attempt({
           recentFailures: row!.failures,
+          lastFailureAt: row!.last_failure,
           now,
           findUserByEmail: (email) => tx.user.findUnique({ where: { email } }),
           writeAuditLog: async (entry) => {

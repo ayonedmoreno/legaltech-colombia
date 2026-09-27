@@ -216,13 +216,13 @@ Los límites por IP son en memoria, por proceso (SECURITY_SPEC.md — no compart
 | Endpoint | Por IP | Por cuenta |
 |---|---|---|
 | `POST /api/auth/register` | 5 cada 10 min | n/a |
-| `POST /api/auth/login` | 10 cada 10 min | 5 intentos fallidos cada 15 min (`RATE_LIMITED`, `Retry-After`) |
+| `POST /api/auth/login` | 10 cada 10 min | Retardo progresivo tras 5 intentos fallidos en 24 h (`RATE_LIMITED`, `Retry-After` exacto); ver abajo |
 | `POST /api/auth/password/forgot` | Pendiente (endpoint no implementado aún) | Pendiente |
 | `POST /api/auth/email/verification/resend` | Pendiente (endpoint no implementado aún) | Pendiente |
 
 ### Límite por cuenta en el login: objetivo aprobado de D3 (pendiente de implementación)
 
-> **Nota:** esta sección describe el comportamiento objetivo aprobado para D3 (ADR-002). La atomicidad (transacción, bloqueo consultivo, `lock_timeout`, tiempo de PostgreSQL para la ventana y el 503) ya está implementada (D3-2); el retardo progresivo, el `Retry-After` exacto, `auth.login.rate_limited` y el mensaje único quedan pendientes de D3-3 y D3-4. Hasta entonces sigue vigente lo que indica la tabla anterior: bloqueo de 15 min tras 5 fallos, `Retry-After: 900`, mensaje propio del límite por cuenta y sin `auth.login.rate_limited`. Esta nota y las marcas *(D3, pendiente)* se eliminan al cerrar D3, cuando la tabla pase a describir el retardo progresivo.
+> **Nota:** esta sección describe el comportamiento objetivo aprobado para D3 (ADR-002). La atomicidad (transacción, bloqueo consultivo, `lock_timeout`, tiempo de PostgreSQL y el 503) está implementada (D3-2), y también la ventana de 24 h, el retardo progresivo y el `Retry-After` exacto (D3-3). Quedan pendientes de D3-4 `auth.login.rate_limited` y el mensaje único: hasta entonces el 429 del límite por cuenta usa su mensaje propio ("Demasiados intentos. Inténtalo más tarde.") y no se audita `auth.login.rate_limited`. Esta nota y las marcas *(D3, pendiente)* se eliminan al cerrar D3.
 
 - **Clave:** SHA-256 del email normalizado (minúsculas, sin espacios). Se aplica igual a correos inexistentes: la respuesta no revela si la cuenta existe.
 - **Qué cuenta:** los `auth.login.failed` de las últimas 24 h: credenciales inválidas, correo inexistente, cuenta suspendida y barrera MFA de producción.

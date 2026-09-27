@@ -118,15 +118,18 @@ export class FakeAuthRepository implements AuthRepository {
     await previous;
     try {
       const now = this.clock();
-      const recentFailures = this.auditLog.filter(
-        (e, i) =>
-          e.action === "auth.login.failed" &&
-          e.metadata?.emailHash === emailHash &&
-          this.auditOccurredAt[i]!.getTime() > now.getTime() - windowMs,
-      ).length;
+      const failureTimes = this.auditOccurredAt.filter(
+        (occurredAt, i) =>
+          this.auditLog[i]!.action === "auth.login.failed" &&
+          this.auditLog[i]!.metadata?.emailHash === emailHash &&
+          occurredAt.getTime() > now.getTime() - windowMs,
+      );
       const pending: AuditLogEntry[] = [];
       const result = await attempt({
-        recentFailures,
+        recentFailures: failureTimes.length,
+        lastFailureAt: failureTimes.length
+          ? new Date(Math.max(...failureTimes.map((t) => t.getTime())))
+          : null,
         now,
         findUserByEmail: (email) => this.findUserByEmail(email),
         writeAuditLog: async (entry) => {

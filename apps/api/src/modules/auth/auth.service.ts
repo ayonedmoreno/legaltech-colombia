@@ -21,8 +21,12 @@ export interface AuthServiceOptions {
   /** Whether the process runs in production (ADR-002: MFA barrier for internal roles). */
   isProduction: boolean;
   clock?: Clock;
-  /** Failed-login attempts allowed per account within the window, before throttling (ADR-002). */
+  /**
+   * Failed logins per account allowed within the window before the progressive delay applies
+   * (ADR-002, D3: 5 by default).
+   */
   accountLoginAttemptLimit?: number;
+  /** Window in which failed logins count towards the per-account limit (ADR-002, D3: 24 h). */
   accountLoginWindowMs?: number;
 }
 
@@ -39,9 +43,13 @@ export interface CurrentUserResult {
   actor: Actor;
 }
 
+/** ADR-002 D3 (P-1): first delay once the per-account limit is reached, and its cap. */
+const LOGIN_DELAY_BASE_MS = 30_000;
+const LOGIN_DELAY_CAP_MS = 900_000;
+
 /** How a login attempt ended, decided inside the per-account attempt and acted on after it. */
 type LoginOutcome =
-  | { kind: "throttled" }
+  | { kind: "throttled"; retryAfterSeconds: number }
   | { kind: "invalid_credentials" }
   | { kind: "mfa_required" }
   | { kind: "granted"; user: UserRecord };
@@ -83,7 +91,22 @@ export class AuthService {
     this.isProduction = options.isProduction;
     this.clock = options.clock ?? (() => new Date());
     this.accountLoginAttemptLimit = options.accountLoginAttemptLimit ?? 5;
-    this.accountLoginWindowMs = options.accountLoginWindowMs ?? 15 * 60 * 1000;
+    this.accountLoginWindowMs = options.accountLoginWindowMs ?? 24 * 60 * 60 * 1000;
+  }
+
+  /**
+   * ADR-002 (D3): once an account has F failed logins in the window, with F at or above the
+   * limit, its next attempt must wait D = min(30 s · 2^(F − limit), 900 s) from the most recent
+   * failure. Returns how long is still left to wait (0 or less: the attempt may proceed). Both
+   * times come from PostgreSQL, read inside the attempt's transaction.
+   */
+  private remainingLoginDelayMs(failures: number, lastFailureAt: Date | null, now: Date): number {
+    if (failures < this.accountLoginAttemptLimit || lastFailureAt === null) return 0;
+    const delayMs = Math.min(
+      LOGIN_DELAY_BASE_MS * 2 ** (failures - this.accountLoginAttemptLimit),
+      LOGIN_DELAY_CAP_MS,
+    );
+    return lastFailureAt.getTime() + delayMs - now.getTime();
   }
 
   /**
@@ -169,7 +192,17 @@ export class AuthService {
         emailHash,
         this.accountLoginWindowMs,
         async (attempt): Promise<LoginOutcome> => {
-          if (attempt.recentFailures >= this.accountLoginAttemptLimit) return { kind: "throttled" };
+          const remainingMs = this.remainingLoginDelayMs(
+            attempt.recentFailures,
+            attempt.lastFailureAt,
+            attempt.now,
+          );
+          if (remainingMs > 0) {
+            return {
+              kind: "throttled",
+              retryAfterSeconds: Math.max(1, Math.ceil(remainingMs / 1000)),
+            };
+          }
 
           const user = await attempt.findUserByEmail(email);
           // Always run exactly one Argon2id verification, against a dummy hash when there is no
@@ -210,7 +243,7 @@ export class AuthService {
 
     if (outcome.kind === "throttled") {
       throw new HttpError(429, "RATE_LIMITED", "Demasiados intentos. Inténtalo más tarde.", {
-        headers: { "Retry-After": String(Math.ceil(this.accountLoginWindowMs / 1000)) },
+        headers: { "Retry-After": String(outcome.retryAfterSeconds) },
       });
     }
     if (outcome.kind === "invalid_credentials") {

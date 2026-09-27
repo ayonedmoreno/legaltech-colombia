@@ -557,6 +557,71 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
       expect(await storedFailures(emailHash)).toBe(0);
     });
 
+    /** PostgreSQL's current time, and a failed login backdated relative to it. */
+    async function databaseNow() {
+      const [row] = await prisma.$queryRaw<Array<{ now: Date }>>`SELECT clock_timestamp() AS now`;
+      return row!.now;
+    }
+    const backdatedFailure = (emailHash: string, occurredAt: Date) =>
+      prisma.auditLog.create({
+        data: { action: "auth.login.failed", metadata: { emailHash }, occurredAt },
+      });
+
+    it("gives the attempt the time of its most recent failure inside the window (D3-3)", async () => {
+      const emailHash = uniqueHash();
+      const now = await databaseNow();
+      await backdatedFailure(emailHash, new Date(now.getTime() - 20 * MINUTE_MS)); // outside
+      const latest = new Date(now.getTime() - 5 * MINUTE_MS);
+      await backdatedFailure(emailHash, new Date(now.getTime() - 10 * MINUTE_MS));
+      await backdatedFailure(emailHash, latest);
+
+      const seen = await repository.runLoginAttempt(emailHash, 15 * MINUTE_MS, async (scope) => ({
+        failures: scope.recentFailures,
+        lastFailureAt: scope.lastFailureAt,
+      }));
+      expect(seen.failures).toBe(2);
+      expect(seen.lastFailureAt?.getTime()).toBe(latest.getTime());
+
+      const none = await repository.runLoginAttempt(
+        uniqueHash(),
+        15 * MINUTE_MS,
+        async (scope) => scope.lastFailureAt,
+      );
+      expect(none).toBeNull();
+    });
+
+    it("computes the delay and Retry-After on PostgreSQL time, whatever the API clock says (D3-3)", async () => {
+      const email = uniqueEmail();
+      await repository.createUser({
+        email,
+        passwordHash: await hashPassword(PASSWORD),
+        fullName: "Integración",
+      });
+      const emailHash = createHash("sha256").update(email).digest("hex");
+      const tenSecondsAgo = new Date((await databaseNow()).getTime() - 10_000);
+      for (let i = 0; i < LIMIT; i++) await backdatedFailure(emailHash, tenSecondsAgo);
+
+      // An API clock decades off must not change anything: only PostgreSQL time is used.
+      const service = new AuthService({
+        repository,
+        isProduction: false,
+        clock: () => new Date("2000-01-01T00:00:00Z"),
+      });
+      const blocked = await service
+        .login(
+          { email, password: PASSWORD },
+          { ip: "203.0.113.7", userAgent: "integration-test", requestId: randomUUID() },
+        )
+        .catch((error: unknown) => error);
+
+      expect(blocked).toBeInstanceOf(HttpError);
+      expect((blocked as HttpError).statusCode).toBe(429);
+      // 30 s from the last failure, 10 s already gone: about 20 s left.
+      const retryAfter = Number((blocked as HttpError).headers?.["Retry-After"]);
+      expect(retryAfter).toBeGreaterThanOrEqual(18);
+      expect(retryAfter).toBeLessThanOrEqual(20);
+    }, 20_000);
+
     it("dates the failure with the PostgreSQL time read after the lock", async () => {
       const emailHash = uniqueHash();
       const requestId = randomUUID();
