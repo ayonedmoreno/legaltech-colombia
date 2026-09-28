@@ -8,7 +8,7 @@ import { FakeCasesRepository } from "../modules/cases/cases.repository.fake.js";
 import { CasesService } from "../modules/cases/cases.service.js";
 import { FakeDocumentsRepository } from "../modules/documents/documents.repository.fake.js";
 import { DocumentsService } from "../modules/documents/documents.service.js";
-import { MemoryStorageProvider } from "../storage/storage.fake.js";
+import { MemoryStorageProvider } from "@legaltech/storage";
 
 export const TEST_ENV = loadEnv({
   NODE_ENV: "test",

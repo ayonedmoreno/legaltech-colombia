@@ -1,31 +1,51 @@
 import { randomUUID } from "node:crypto";
 import { createPrismaClient, type PrismaClient } from "@legaltech/database";
+import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PgBossJobQueue, startPgBossForApi } from "../../jobs/job-queue.js";
 import type { AuditLogEntry } from "../auth/auth.types.js";
 import { PrismaCasesRepository } from "../cases/cases.repository.js";
 import { PrismaDocumentsRepository } from "./documents.repository.js";
 import type { CreateDocumentInput, DocumentRecord } from "./documents.types.js";
 
 /**
- * PrismaDocumentsRepository against real PostgreSQL, as the application role (opt-in through
- * INTEGRATION_DATABASE_URL; never a development database: audit_logs rows cannot be deleted).
+ * PrismaDocumentsRepository against real PostgreSQL and pg-boss, as the application role (opt-in
+ * through INTEGRATION_DATABASE_URL; never a development database: audit_logs rows cannot be
+ * deleted). The jobs are read back as the worker role (INTEGRATION_WORKER_DATABASE_URL): the
+ * application role can only enqueue them.
  */
 const databaseUrl = process.env.INTEGRATION_DATABASE_URL;
+const workerDatabaseUrl = process.env.INTEGRATION_WORKER_DATABASE_URL;
 
 describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration)", () => {
   let prisma: PrismaClient;
+  let workerPrisma: PrismaClient;
+  let boss: PgBoss;
   let repository: PrismaDocumentsRepository;
   let cases: PrismaCasesRepository;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    if (!workerDatabaseUrl) throw new Error("INTEGRATION_WORKER_DATABASE_URL must be set too");
     prisma = createPrismaClient(databaseUrl!);
-    repository = new PrismaDocumentsRepository(prisma);
+    workerPrisma = createPrismaClient(workerDatabaseUrl);
+    boss = await startPgBossForApi(databaseUrl!);
+    repository = new PrismaDocumentsRepository(prisma, new PgBossJobQueue(boss));
     cases = new PrismaCasesRepository(prisma);
   });
 
   afterAll(async () => {
+    await boss?.stop({ graceful: false });
     await prisma?.$disconnect();
+    await workerPrisma?.$disconnect();
   });
+
+  /** document.scan jobs of a document (read as the worker role). */
+  async function scanJobs(documentId: string): Promise<number> {
+    const [row] = await workerPrisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT count(*) AS count FROM pgboss.job_common
+      WHERE name = 'document.scan' AND data->>'documentId' = ${documentId}`;
+    return Number(row!.count);
+  }
 
   async function userWithCase() {
     const user = await prisma.user.create({
@@ -83,7 +103,7 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
   const events = (documentId: string) =>
     prisma.auditLog.findMany({ where: { action: "document.uploaded", entityId: documentId } });
 
-  it("stores the document UPLOADED / NOT_STARTED with its event and case_id, at one time", async () => {
+  it("stores the document PENDING_SCAN / NOT_STARTED with its event, case_id and scan job", async () => {
     const owner = await userWithCase();
     const data = input(owner);
 
@@ -93,9 +113,12 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
       id: data.id,
       caseId: owner.caseId,
       uploadedByUserId: owner.userId,
-      status: "UPLOADED",
+      status: "PENDING_SCAN",
       ocrStatus: "NOT_STARTED",
+      scanAttempts: 0,
+      sanitizedStorageKey: null,
     });
+    expect(await scanJobs(data.id)).toBe(1);
     const [event] = await events(data.id);
     expect(event).toMatchObject({ caseId: owner.caseId, actorUserId: owner.userId });
     expect(event!.occurredAt.getTime()).toBe(created!.createdAt.getTime());
@@ -110,9 +133,10 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
     expect(await repository.createDocument(data)).toBeNull();
     expect(await prisma.document.count({ where: { id: data.id } })).toBe(0);
     expect(await events(data.id)).toHaveLength(0);
+    expect(await scanJobs(data.id)).toBe(0);
   });
 
-  it("keeps nothing when the audit write fails (one transaction)", async () => {
+  it("keeps nothing when the audit write fails: no row, no job (one transaction)", async () => {
     const owner = await userWithCase();
     const base = input(owner);
     const data = {
@@ -122,6 +146,19 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
 
     await expect(repository.createDocument(data)).rejects.toThrow();
     expect(await prisma.document.count({ where: { id: data.id } })).toBe(0);
+    expect(await scanJobs(data.id)).toBe(0);
+  });
+
+  it("keeps nothing when the job cannot be enqueued (one transaction)", async () => {
+    const owner = await userWithCase();
+    const failing = new PrismaDocumentsRepository(prisma, {
+      enqueueDocumentScan: () => Promise.reject(new Error("queue unavailable")),
+    });
+    const data = input(owner);
+
+    await expect(failing.createDocument(data)).rejects.toThrow("queue unavailable");
+    expect(await prisma.document.count({ where: { id: data.id } })).toBe(0);
+    expect(await events(data.id)).toHaveLength(0);
   });
 
   it("rejects an empty file and a reused storage key", async () => {
@@ -161,11 +198,14 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
     expect(await repository.findOwnDocument(doc.id, secondCase.id, owner.userId)).toBeNull();
   });
 
-  it("the application role can neither change nor delete a document", async () => {
+  it("the application role can neither change nor delete a document, nor mark it CLEAN", async () => {
     const owner = await userWithCase();
     const doc = (await repository.createDocument(input(owner)))!;
     await expect(
       prisma.document.update({ where: { id: doc.id }, data: { fileName: "x.pdf" } }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.document.updateMany({ where: { id: doc.id }, data: { status: "CLEAN" } }),
     ).rejects.toThrow();
     await expect(prisma.document.delete({ where: { id: doc.id } })).rejects.toThrow();
   });

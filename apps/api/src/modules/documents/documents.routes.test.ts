@@ -4,7 +4,7 @@ import { cookieHeader, findSetCookie } from "../../test-support/cookies.js";
 import { buildTestApp } from "../../test-support/build-test-app.js";
 import type { AuditLogEntry } from "../auth/auth.types.js";
 import { FakeDocumentsRepository } from "./documents.repository.fake.js";
-import { MemoryStorageProvider } from "../../storage/storage.fake.js";
+import { MemoryStorageProvider } from "@legaltech/storage";
 import { FakeCasesRepository } from "../cases/cases.repository.fake.js";
 
 /**
@@ -104,7 +104,7 @@ const uploadedEvents = (testApp: TestApp) =>
   testApp.documentsRepository.auditLog.filter((e) => e.action === "document.uploaded");
 
 describe("POST /api/cases/:caseId/documents", () => {
-  it("stores the file in storage and its metadata, UPLOADED / NOT_STARTED, with its event", async () => {
+  it("stores the file and its metadata PENDING_SCAN / NOT_STARTED, with its event and scan job", async () => {
     const testApp = await buildTestApp();
     const ana = await registerAndLogin(testApp, "ana@example.com");
     const caseId = await newCase(testApp, ana);
@@ -118,7 +118,7 @@ describe("POST /api/cases/:caseId/documents", () => {
       fileName: "Resolución 1.pdf",
       fileType: "PDF",
       fileSize: PDF.length,
-      status: "UPLOADED",
+      status: "PENDING_SCAN",
       ocrStatus: "NOT_STARTED",
       createdAt: expect.any(String),
     });
@@ -137,7 +137,7 @@ describe("POST /api/cases/:caseId/documents", () => {
         entityType: "Document",
         entityId: document.id,
         caseId,
-        newValue: { fileType: "PDF", fileSize: PDF.length, status: "UPLOADED" },
+        newValue: { fileType: "PDF", fileSize: PDF.length, status: "PENDING_SCAN" },
       }),
     ]);
     // The file name is never written to the audit log.
@@ -333,8 +333,20 @@ describe("GET /api/cases/:caseId/documents", () => {
   });
 });
 
+/** What the worker writes at the end of a treatment (the fake stands in for PostgreSQL). */
+function setScanResult(
+  testApp: TestApp,
+  documentId: string,
+  status: "UPLOADED" | "PENDING_SCAN" | "SCANNING" | "CLEAN" | "INFECTED" | "SCAN_FAILED",
+  sanitizedStorageKey: string | null = null,
+) {
+  const stored = testApp.documentsRepository.documents.get(documentId)!;
+  stored.status = status;
+  stored.sanitizedStorageKey = sanitizedStorageKey;
+}
+
 describe("GET /api/cases/:caseId/documents/:documentId/download", () => {
-  it("returns a short-lived URL for the caller's document, uncached, without auditing", async () => {
+  it("returns a short-lived URL for a CLEAN PDF: the untouched original, uncached, without auditing", async () => {
     const now = new Date("2026-09-27T12:00:00.000Z");
     const testApp = await buildTestApp({ clock: () => now });
     const ana = await registerAndLogin(testApp, "ana@example.com");
@@ -342,6 +354,7 @@ describe("GET /api/cases/:caseId/documents/:documentId/download", () => {
     const document = (
       await upload(testApp, ana, caseId, PDF, { fileName: "Resolución.pdf" })
     ).json().document;
+    setScanResult(testApp, document.id, "CLEAN");
 
     const response = await get(
       testApp,
@@ -356,10 +369,97 @@ describe("GET /api/cases/:caseId/documents/:documentId/download", () => {
       expiresAt: "2026-09-27T12:01:00.000Z",
     });
     expect(testApp.storage.downloadUrls).toEqual([
-      expect.objectContaining({ fileName: "Resolución.pdf", expiresInSeconds: 60 }),
+      expect.objectContaining({
+        key: `cases/${caseId}/documents/${document.id}`,
+        fileName: "Resolución.pdf",
+        expiresInSeconds: 60,
+      }),
     ]);
     expect(testApp.documentsRepository.auditLog).toHaveLength(1); // only the upload
   });
+
+  it("serves the copy without metadata for a CLEAN image, never its original", async () => {
+    const testApp = await buildTestApp();
+    const ana = await registerAndLogin(testApp, "ana@example.com");
+    const caseId = await newCase(testApp, ana);
+    const document = (await upload(testApp, ana, caseId, PNG, { fileName: "foto.png" })).json()
+      .document;
+    const original = `cases/${caseId}/documents/${document.id}`;
+    setScanResult(testApp, document.id, "CLEAN", `${original}.sanitized`);
+
+    const response = await get(
+      testApp,
+      ana,
+      `/api/cases/${caseId}/documents/${document.id}/download`,
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(testApp.storage.downloadUrls.map((u) => u.key)).toEqual([`${original}.sanitized`]);
+  });
+
+  it("refuses a CLEAN image whose copy without metadata is missing: its original is never served", async () => {
+    const testApp = await buildTestApp();
+    const ana = await registerAndLogin(testApp, "ana@example.com");
+    const caseId = await newCase(testApp, ana);
+    const document = (await upload(testApp, ana, caseId, PNG, { fileName: "foto.png" })).json()
+      .document;
+    setScanResult(testApp, document.id, "CLEAN", null);
+
+    const response = await get(
+      testApp,
+      ana,
+      `/api/cases/${caseId}/documents/${document.id}/download`,
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(testApp.storage.downloadUrls).toHaveLength(0);
+  });
+
+  it("is blocked right after the upload: the document waits for its security treatment", async () => {
+    const testApp = await buildTestApp();
+    const ana = await registerAndLogin(testApp, "ana@example.com");
+    const caseId = await newCase(testApp, ana);
+    const document = (await upload(testApp, ana, caseId, PDF)).json().document;
+
+    const response = await get(
+      testApp,
+      ana,
+      `/api/cases/${caseId}/documents/${document.id}/download`,
+    );
+
+    expect(document.status).toBe("PENDING_SCAN");
+    expect(testApp.documentsRepository.enqueuedScans).toEqual([document.id]);
+    expect(response.statusCode).toBe(403);
+    expect(testApp.storage.downloadUrls).toHaveLength(0);
+  });
+
+  it.each(["UPLOADED", "PENDING_SCAN", "SCANNING", "INFECTED", "SCAN_FAILED"] as const)(
+    "never issues a URL for a %s document: 403 with one generic message",
+    async (status) => {
+      const testApp = await buildTestApp();
+      const ana = await registerAndLogin(testApp, "ana@example.com");
+      const caseId = await newCase(testApp, ana);
+      const pdf = (await upload(testApp, ana, caseId, PDF)).json().document;
+      const png = (await upload(testApp, ana, caseId, PNG, { fileName: "f.png" })).json().document;
+      // Even with a copy recorded, only CLEAN may be served.
+      setScanResult(testApp, pdf.id, status);
+      setScanResult(testApp, png.id, status, `cases/${caseId}/documents/${png.id}.sanitized`);
+
+      for (const document of [pdf, png]) {
+        const response = await get(
+          testApp,
+          ana,
+          `/api/cases/${caseId}/documents/${document.id}/download`,
+        );
+        expect(response.statusCode).toBe(403);
+        expect(response.json().error).toMatchObject({
+          code: "FORBIDDEN",
+          message: "El documento no está disponible para descarga.",
+        });
+      }
+      expect(testApp.storage.downloadUrls).toHaveLength(0);
+    },
+  );
 
   it("answers the same 404 for another user's document, another case's id and bad ids (IDOR)", async () => {
     const testApp = await buildTestApp();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachmentDisposition } from "../../storage/storage.types.js";
+import { attachmentDisposition } from "@legaltech/storage";
 import { detectFileType } from "./file-type.js";
 
 const bytes = (...values: number[]) => Uint8Array.from(values);

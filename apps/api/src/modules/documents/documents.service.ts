@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Document, DocumentDownloadResponse } from "@legaltech/contracts";
 import { HttpError } from "../../common/http-error.js";
-import type { StorageProvider } from "../../storage/storage.types.js";
+import type { StorageProvider } from "@legaltech/storage";
 import type { CurrentUserResult, RequestContext } from "../auth/auth.service.js";
 import type { CasesRepository } from "../cases/cases.types.js";
 import { CONTENT_TYPES, detectFileType } from "./file-type.js";
 import { toPublicDocument } from "./documents.mapper.js";
 import { can, type DocumentAction } from "./documents.policy.js";
-import type { DocumentsRepository } from "./documents.types.js";
+import type { DocumentRecord, DocumentsRepository } from "./documents.types.js";
 
 export interface DocumentsServiceOptions {
   repository: DocumentsRepository;
@@ -27,6 +27,19 @@ export interface ErrorLogger {
 
 function notFound(): HttpError {
   return new HttpError(404, "NOT_FOUND", "Recurso no encontrado.");
+}
+
+/**
+ * The object a download may serve, or null when the document may not be downloaded at all
+ * (DATABASE_SPEC.md, "Tratamiento de seguridad del documento"): only a `CLEAN` document, and
+ * only the version that went through the treatment — the copy without metadata for JPEG and PNG,
+ * the untouched original for PDF (whose metadata cleaning is still undecided). A `CLEAN` image
+ * without its copy is refused too: the original may carry identifying metadata.
+ */
+export function downloadableKey(document: DocumentRecord): string | null {
+  if (document.status !== "CLEAN") return null;
+  if (document.fileType === "PDF") return document.storageKey;
+  return document.sanitizedStorageKey;
 }
 
 /**
@@ -164,11 +177,15 @@ export class DocumentsService {
       current.user.id,
     );
     if (!document) throw notFound();
+    const key = downloadableKey(document);
+    if (!key) {
+      throw new HttpError(403, "FORBIDDEN", "El documento no está disponible para descarga.");
+    }
 
     const expiresInSeconds = this.options.downloadUrlTtlSeconds;
     const expiresAt = new Date(this.clock().getTime() + expiresInSeconds * 1000);
     const url = await this.options.storage.createDownloadUrl({
-      key: document.storageKey,
+      key,
       fileName: document.fileName,
       contentType: CONTENT_TYPES[document.fileType],
       expiresInSeconds,

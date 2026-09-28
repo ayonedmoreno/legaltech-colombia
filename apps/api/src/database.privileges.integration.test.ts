@@ -71,10 +71,35 @@ describe.skipIf(!databaseUrl)("application role privileges (PostgreSQL integrati
     expect(row?.entries).toBe(0n);
   });
 
-  it("cannot create objects in the schema or temporary tables", async () => {
-    const [row] = await prisma.$queryRaw<Array<{ create: boolean; temporary: boolean }>>`
+  it("cannot create objects in any schema, in the database, or temporary tables", async () => {
+    const [row] = await prisma.$queryRaw<
+      Array<{ create: boolean; boss: boolean; database: boolean; temporary: boolean }>
+    >`
       SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS "create",
+             has_schema_privilege(current_user, 'pgboss', 'CREATE') AS boss,
+             has_database_privilege(current_user, current_database(), 'CREATE') AS database,
              has_database_privilege(current_user, current_database(), 'TEMPORARY') AS temporary`;
-    expect(row).toEqual({ create: false, temporary: false });
+    expect(row).toEqual({ create: false, boss: false, database: false, temporary: false });
+  });
+
+  it("in pgboss can only enqueue: read the version and queues, insert jobs and read their id", async () => {
+    const rows = await prisma.$queryRaw<Array<{ table: string; privilege: string }>>`
+      SELECT t.tablename AS "table", p.privilege
+      FROM pg_tables t CROSS JOIN unnest(${PRIVILEGES}::text[]) AS p(privilege)
+      WHERE t.schemaname = 'pgboss'
+        AND has_table_privilege(current_user, format('pgboss.%I', t.tablename), p.privilege)`;
+    const actual: Record<string, string[]> = {};
+    for (const { table, privilege } of rows) (actual[table] ??= []).push(privilege);
+
+    expect(Object.fromEntries(Object.entries(actual).map(([t, l]) => [t, l.sort()]))).toEqual({
+      version: ["SELECT"],
+      queue: ["SELECT"],
+      job_common: ["INSERT"],
+    });
+    // Of a job, only its id can be read back (INSERT … RETURNING id): never its data.
+    const [columns] = await prisma.$queryRaw<Array<{ id: boolean; data: boolean }>>`
+      SELECT has_column_privilege(current_user, 'pgboss.job_common', 'id', 'SELECT') AS id,
+             has_column_privilege(current_user, 'pgboss.job_common', 'data', 'SELECT') AS data`;
+    expect(columns).toEqual({ id: true, data: false });
   });
 });

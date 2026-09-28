@@ -11,7 +11,7 @@ import { PrismaCasesRepository } from "../cases/cases.repository.js";
 import { CasesService } from "../cases/cases.service.js";
 import { PrismaDocumentsRepository } from "../documents/documents.repository.js";
 import { DocumentsService } from "../documents/documents.service.js";
-import { MemoryStorageProvider } from "../../storage/storage.fake.js";
+import { MemoryStorageProvider } from "@legaltech/storage";
 import {
   DuplicateEmailError,
   LoginAttemptUnavailableError,
@@ -1046,7 +1046,10 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
         authService: new AuthService({ repository, isProduction: false }),
         casesService: new CasesService({ repository: new PrismaCasesRepository(prisma) }),
         documentsService: new DocumentsService({
-          repository: new PrismaDocumentsRepository(prisma),
+          // These tests never upload documents: a queue that refuses to be used.
+          repository: new PrismaDocumentsRepository(prisma, {
+            enqueueDocumentScan: () => Promise.reject(new Error("not used by these tests")),
+          }),
           cases: new PrismaCasesRepository(prisma),
           storage: new MemoryStorageProvider(),
           maxBytes: TEST_ENV.DOCUMENT_MAX_BYTES,

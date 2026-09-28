@@ -1,5 +1,4 @@
-import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
-import { loadStorageEnv } from "../config/storage-env.js";
+import { ensureDevelopmentBucket, loadStorageEnv } from "@legaltech/storage";
 
 /**
  * `pnpm storage:init`: creates the documents bucket in the local S3-compatible storage
@@ -11,20 +10,5 @@ if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
   throw new Error("storage:init only runs with NODE_ENV=development or test.");
 }
 const env = loadStorageEnv();
-const client = new S3Client({
-  region: env.STORAGE_REGION,
-  endpoint: env.STORAGE_ENDPOINT,
-  forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
-  credentials:
-    env.STORAGE_ACCESS_KEY_ID && env.STORAGE_SECRET_ACCESS_KEY
-      ? { accessKeyId: env.STORAGE_ACCESS_KEY_ID, secretAccessKey: env.STORAGE_SECRET_ACCESS_KEY }
-      : undefined,
-});
-
-try {
-  await client.send(new HeadBucketCommand({ Bucket: env.STORAGE_BUCKET }));
-  console.log(`bucket ${env.STORAGE_BUCKET} already exists`);
-} catch {
-  await client.send(new CreateBucketCommand({ Bucket: env.STORAGE_BUCKET }));
-  console.log(`bucket ${env.STORAGE_BUCKET} created`);
-}
+const result = await ensureDevelopmentBucket(env);
+console.log(`bucket ${env.STORAGE_BUCKET} ${result === "created" ? "created" : "already exists"}`);

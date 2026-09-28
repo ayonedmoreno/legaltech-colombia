@@ -1,4 +1,6 @@
 import type { PrismaClient } from "@legaltech/database";
+import { fromPrisma } from "pg-boss";
+import type { JobQueue } from "../../jobs/job-queue.js";
 import { auditLogData } from "../auth/auth.repository.js";
 import type {
   CreateDocumentInput,
@@ -8,7 +10,10 @@ import type {
 
 /** Prisma-backed implementation of DocumentsRepository. */
 export class PrismaDocumentsRepository implements DocumentsRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly jobs: JobQueue,
+  ) {}
 
   async createDocument(input: CreateDocumentInput): Promise<DocumentRecord | null> {
     return this.prisma.$transaction(async (tx) => {
@@ -37,6 +42,8 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
       await tx.auditLog.create({
         data: { ...auditLogData(input.audit(created)), caseId: input.caseId, occurredAt: now },
       });
+      // The security treatment is queued with the row: a document never exists without its job.
+      await this.jobs.enqueueDocumentScan(created.id, fromPrisma(tx));
       return created;
     });
   }

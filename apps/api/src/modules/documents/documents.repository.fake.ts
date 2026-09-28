@@ -14,6 +14,8 @@ import type {
 export class FakeDocumentsRepository implements DocumentsRepository {
   readonly documents = new Map<string, DocumentRecord>();
   readonly auditLog: AuditLogEntry[] = [];
+  /** Documents whose `document.scan` job was enqueued (with their row, in the same transaction). */
+  readonly enqueuedScans: string[] = [];
   /** Test hook: stands in for PostgreSQL's clock. */
   clock: () => Date = () => new Date();
 
@@ -31,11 +33,17 @@ export class FakeDocumentsRepository implements DocumentsRepository {
       fileSize: input.fileSize,
       uploadedByUserId: input.userId,
       createdAt: this.clock(),
-      status: "UPLOADED",
+      status: "PENDING_SCAN",
       ocrStatus: "NOT_STARTED",
+      scanAttempts: 0,
+      scanStartedAt: null,
+      scannedAt: null,
+      scanSignature: null,
+      sanitizedStorageKey: null,
     };
     this.recordAudit({ ...input.audit(created), caseId: input.caseId });
     this.documents.set(created.id, created);
+    this.enqueuedScans.push(created.id);
     return { ...created };
   }
 

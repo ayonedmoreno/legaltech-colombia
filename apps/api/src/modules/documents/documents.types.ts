@@ -13,6 +13,12 @@ export interface DocumentRecord {
   createdAt: Date;
   status: DocumentStatus;
   ocrStatus: DocumentOcrStatus;
+  scanAttempts: number;
+  scanStartedAt: Date | null;
+  scannedAt: Date | null;
+  scanSignature: string | null;
+  /** Derived copy without identifying metadata (JPEG/PNG), written by the worker. */
+  sanitizedStorageKey: string | null;
 }
 
 export interface CreateDocumentInput {
@@ -36,8 +42,9 @@ export interface CreateDocumentInput {
 export interface DocumentsRepository {
   /**
    * In one transaction: checks that the case is still the user's and in `DRAFT`, stores the
-   * document (`UPLOADED`, `NOT_STARTED`) and writes its audit event with `case_id`, all at one
-   * PostgreSQL time. Returns null, writing nothing, when the case is no longer an owned `DRAFT`.
+   * document (`PENDING_SCAN`, `NOT_STARTED`), writes its audit event with `case_id` and enqueues
+   * its `document.scan` job, all at one PostgreSQL time. Returns null, writing nothing, when the
+   * case is no longer an owned `DRAFT`.
    */
   createDocument(input: CreateDocumentInput): Promise<DocumentRecord | null>;
   /** The documents of one of the user's cases, most recent first (empty for anyone else's). */
