@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { apiErrorSchema, documentFileNameSchema, documentParamsSchema } from "./index.js";
+import {
+  apiErrorSchema,
+  documentFileNameSchema,
+  documentParamsSchema,
+  documentScanJobSchema,
+  documentStatusSchema,
+} from "./index.js";
 
 describe("document contracts", () => {
   it.each(["comparendo.pdf", "Foto del vehículo (1).jpg", "a".repeat(255)])(
@@ -30,5 +36,25 @@ describe("document contracts", () => {
   it("has an error code for a body over the endpoint's limit", () => {
     const body = { error: { code: "PAYLOAD_TOO_LARGE", message: "x", requestId: "r" } };
     expect(apiErrorSchema.safeParse(body).success).toBe(true);
+  });
+
+  it("has the six statuses of the security treatment", () => {
+    expect(documentStatusSchema.options).toEqual([
+      "UPLOADED",
+      "PENDING_SCAN",
+      "SCANNING",
+      "CLEAN",
+      "INFECTED",
+      "SCAN_FAILED",
+    ]);
+  });
+
+  it("accepts a document.scan job with a document id only", () => {
+    const id = "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11";
+    expect(documentScanJobSchema.safeParse({ documentId: id }).success).toBe(true);
+    expect(documentScanJobSchema.safeParse({ documentId: "x" }).success).toBe(false);
+    expect(documentScanJobSchema.safeParse({ documentId: id, fileName: "a.pdf" }).success).toBe(
+      false,
+    );
   });
 });

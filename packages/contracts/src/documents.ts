@@ -4,8 +4,18 @@ import { z } from "zod";
 export const documentFileTypeSchema = z.enum(["PDF", "JPEG", "PNG"]);
 export type DocumentFileType = z.infer<typeof documentFileTypeSchema>;
 
-/** Mirrors `DocumentStatus` (first Documents slice: UPLOADED only). */
-export const documentStatusSchema = z.enum(["UPLOADED"]);
+/**
+ * Mirrors `DocumentStatus`: the security treatment of a document (DATABASE_SPEC.md). Only
+ * `CLEAN` can be downloaded; every other status is blocked.
+ */
+export const documentStatusSchema = z.enum([
+  "UPLOADED",
+  "PENDING_SCAN",
+  "SCANNING",
+  "CLEAN",
+  "INFECTED",
+  "SCAN_FAILED",
+]);
 export type DocumentStatus = z.infer<typeof documentStatusSchema>;
 
 /** Mirrors `DocumentOcrStatus` (first Documents slice: NOT_STARTED only). */
@@ -59,3 +69,10 @@ export const documentFileNameSchema = z
   .refine((name) => !/[/\\\u0000-\u001f\u007f]/.test(name), {
     message: "must not contain path separators or control characters",
   });
+
+/** The pg-boss queue of the document security treatment (API enqueues, worker consumes). */
+export const DOCUMENT_SCAN_QUEUE = "document.scan";
+
+/** Payload of a `document.scan` job: only the document's id, never its name or content. */
+export const documentScanJobSchema = z.object({ documentId: z.string().uuid() }).strict();
+export type DocumentScanJob = z.infer<typeof documentScanJobSchema>;
