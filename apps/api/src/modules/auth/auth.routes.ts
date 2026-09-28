@@ -1,4 +1,3 @@
-import { isIP } from "node:net";
 import type {
   AcceptedResponse,
   CsrfResponse,
@@ -17,7 +16,6 @@ import {
   verifyEmailRequestSchema,
 } from "@legaltech/contracts";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
-import type { ZodError } from "zod";
 import { HttpError } from "../../common/http-error.js";
 import { FixedWindowRateLimiter } from "../../security/rate-limiter.js";
 import { generateOpaqueToken } from "../../security/crypto.js";
@@ -29,58 +27,18 @@ import {
   setSessionCookies,
 } from "./auth.cookies.js";
 import { FORGOT_IP_LIMIT, RESEND_IP_LIMIT, RESET_IP_LIMIT } from "./auth.email-settings.js";
-import { isSameOrigin } from "./auth.origin.js";
-import type { AuthService, RequestContext } from "./auth.service.js";
-import type { SessionRecord } from "./auth.types.js";
+import {
+  clientIp,
+  requestContext,
+  requireCsrf,
+  requireSameOrigin,
+  validationError,
+} from "./auth.request.js";
+import type { AuthService } from "./auth.service.js";
 
 export interface AuthRouteDeps {
   authService: AuthService;
   appOrigin: string;
-}
-
-/**
- * The client address used for the per-IP limits and recorded in audit logs and sessions
- * (ADR-002, D2-G). Behind a proxy listed in API_TRUST_PROXY, `request.ip` comes from
- * X-Forwarded-For and can be any text a client sent; anything that is not an IP address falls
- * back to the TCP peer instead of being rejected.
- */
-function clientIp(request: FastifyRequest): string {
-  return isIP(request.ip) !== 0 ? request.ip : (request.socket.remoteAddress ?? "");
-}
-
-function requestContext(request: FastifyRequest): RequestContext {
-  return {
-    ip: clientIp(request),
-    userAgent: request.headers["user-agent"] ?? null,
-    requestId: request.id,
-  };
-}
-
-/**
- * The `X-CSRF-Token` header — never the CSRF cookie itself. In the double-submit pattern
- * (ADR-002 / API_SPEC.md) the cookie is not the credential being checked: it travels
- * automatically with every request, cross-site ones included, exactly like the session
- * cookie, so comparing it against the session would always "match" and provide no
- * protection at all. The header is the credential, because only same-origin JavaScript can
- * read the CSRF cookie's value and place it there; a cross-site request cannot forge it.
- */
-function readCsrfHeader(request: FastifyRequest): string | undefined {
-  const header = request.headers["x-csrf-token"];
-  return Array.isArray(header) ? header[0] : header;
-}
-
-function validationError(error: ZodError): HttpError {
-  const details = error.issues.map((issue) => ({
-    field: issue.path.join(".") || "(root)",
-    issue: issue.message,
-  }));
-  return new HttpError(400, "VALIDATION_ERROR", "Solicitud inválida.", { details });
-}
-
-function requireSameOrigin(request: FastifyRequest, appOrigin: string): void {
-  if (!isSameOrigin(request.headers, appOrigin)) {
-    throw new HttpError(403, "CSRF_INVALID", "Origen no permitido.");
-  }
 }
 
 function enforceIpLimit(limiter: FixedWindowRateLimiter, request: FastifyRequest): void {
@@ -294,20 +252,4 @@ async function requireCsrfIfSessionValid(
   const current = await authService.currentUser(readSessionToken(request));
   if (!current) return;
   requireCsrf(request, authService, current.session, appOrigin);
-}
-
-/**
- * CSRF for a mutating request made with a valid session (API_SPEC.md): same Origin (or Referer)
- * and the session's CSRF token in the `X-CSRF-Token` header, or 403 `CSRF_INVALID`.
- */
-function requireCsrf(
-  request: FastifyRequest,
-  authService: AuthService,
-  session: SessionRecord,
-  appOrigin: string,
-): void {
-  requireSameOrigin(request, appOrigin);
-  if (!authService.verifyCsrf(session, readCsrfHeader(request))) {
-    throw new HttpError(403, "CSRF_INVALID", "Token CSRF inválido o ausente.");
-  }
 }
