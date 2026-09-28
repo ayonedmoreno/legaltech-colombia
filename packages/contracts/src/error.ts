@@ -9,6 +9,7 @@ export const apiErrorCodeSchema = z.enum([
   "CSRF_INVALID",
   "FORBIDDEN",
   "NOT_FOUND",
+  "PAYLOAD_TOO_LARGE",
   "RATE_LIMITED",
   "SERVICE_UNAVAILABLE",
   "INTERNAL_ERROR",
