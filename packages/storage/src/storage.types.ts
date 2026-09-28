@@ -6,6 +6,11 @@
 export interface StorageProvider {
   /** Stores an object under `key`, replacing nothing: keys are always new. */
   putObject(input: { key: string; body: Buffer; contentType: string }): Promise<void>;
+  /**
+   * Reads a whole object (the worker reads an original to scan it). Throws
+   * StorageObjectNotFoundError when there is no object under `key`.
+   */
+  getObject(key: string): Promise<Buffer>;
   /** Removes an object (used to undo an upload whose database write failed). */
   deleteObject(key: string): Promise<void>;
   /**
@@ -19,6 +24,14 @@ export interface StorageProvider {
     contentType: string;
     expiresInSeconds: number;
   }): Promise<string>;
+}
+
+/** There is no object under the requested key. */
+export class StorageObjectNotFoundError extends Error {
+  constructor(key: string) {
+    super(`No stored object under key ${key}`);
+    this.name = "StorageObjectNotFoundError";
+  }
 }
 
 /**

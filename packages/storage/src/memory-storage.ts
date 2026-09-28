@@ -1,4 +1,4 @@
-import type { StorageProvider } from "./storage.types.js";
+import { StorageObjectNotFoundError, type StorageProvider } from "./storage.types.js";
 
 /** In-memory StorageProvider for tests. The S3 implementation has its own integration test. */
 export class MemoryStorageProvider implements StorageProvider {
@@ -7,6 +7,12 @@ export class MemoryStorageProvider implements StorageProvider {
 
   async putObject(input: { key: string; body: Buffer; contentType: string }): Promise<void> {
     this.objects.set(input.key, { body: input.body, contentType: input.contentType });
+  }
+
+  async getObject(key: string): Promise<Buffer> {
+    const object = this.objects.get(key);
+    if (!object) throw new StorageObjectNotFoundError(key);
+    return Buffer.from(object.body);
   }
 
   async deleteObject(key: string): Promise<void> {

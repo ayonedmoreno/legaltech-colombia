@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { beforeAll, describe, expect, it } from "vitest";
 import { S3StorageProvider } from "./s3-storage.js";
+import { StorageObjectNotFoundError } from "./storage.types.js";
 
 /**
  * S3StorageProvider against a real S3-compatible service (SeaweedFS in development and CI).
@@ -85,6 +86,16 @@ describe.skipIf(!endpoint)("S3StorageProvider (S3-compatible integration)", () =
 
     await new Promise((resolve) => setTimeout(resolve, 2_500));
     expect((await fetch(url)).status).toBe(403);
+  });
+
+  it("reads back the exact bytes of an object, and reports a missing one", async () => {
+    const key = `cases/${randomUUID()}/documents/${randomUUID()}`;
+    await storage.putObject({ key, body: PDF, contentType: "application/pdf" });
+
+    expect((await storage.getObject(key)).equals(PDF)).toBe(true);
+    await expect(storage.getObject(`${key}.missing`)).rejects.toBeInstanceOf(
+      StorageObjectNotFoundError,
+    );
   });
 
   it("deletes an object (the undo of a failed upload)", async () => {

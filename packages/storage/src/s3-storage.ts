@@ -1,13 +1,18 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  NoSuchKey,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { StorageEnv } from "../config/storage-env.js";
-import { attachmentDisposition, type StorageProvider } from "./storage.types.js";
+import type { StorageEnv } from "./storage-env.js";
+import {
+  attachmentDisposition,
+  StorageObjectNotFoundError,
+  type StorageProvider,
+} from "./storage.types.js";
 
 /**
  * StorageProvider over any S3-compatible service: SeaweedFS in development and CI, the
@@ -50,6 +55,19 @@ export class S3StorageProvider implements StorageProvider {
         ContentLength: input.body.length,
       }),
     );
+  }
+
+  async getObject(key: string): Promise<Buffer> {
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (!response.Body) throw new StorageObjectNotFoundError(key);
+      return Buffer.from(await response.Body.transformToByteArray());
+    } catch (error) {
+      if (error instanceof NoSuchKey) throw new StorageObjectNotFoundError(key);
+      throw error;
+    }
   }
 
   async deleteObject(key: string): Promise<void> {
