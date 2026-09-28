@@ -1,4 +1,10 @@
-import type { Case, CaseStatus, CaseType, DocumentFileType } from "@legaltech/contracts";
+import type {
+  Case,
+  CaseStatus,
+  CaseType,
+  DocumentFileType,
+  DocumentStatus,
+} from "@legaltech/contracts";
 
 /**
  * Spanish labels of the case types and statuses (ARCHITECTURE_REPORT D4: code in English, UI in
@@ -68,6 +74,21 @@ export const DOCUMENT_FILE_TYPE_LABELS: Record<DocumentFileType, string> = {
   JPEG: "Imagen JPEG",
   PNG: "Imagen PNG",
 };
+
+/** The security treatment of a document, as the user reads it (DATABASE_SPEC.md). */
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+  UPLOADED: "Pendiente de análisis",
+  PENDING_SCAN: "Pendiente de análisis",
+  SCANNING: "En análisis",
+  CLEAN: "Disponible",
+  INFECTED: "Bloqueado: se detectó una amenaza",
+  SCAN_FAILED: "Bloqueado: no se pudo analizar",
+};
+
+/** Only a document that passed its security treatment can be downloaded (the API enforces it). */
+export function isDownloadable(status: DocumentStatus): boolean {
+  return status === "CLEAN";
+}
 
 /** The upload limit shown to the user; the API enforces its own (DOCUMENT_MAX_BYTES). */
 export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;

@@ -7,6 +7,8 @@ import {
   CASE_STATUS_LABELS,
   CASE_TYPE_LABELS,
   DOCUMENT_FILE_TYPE_LABELS,
+  DOCUMENT_STATUS_LABELS,
+  isDownloadable,
   formatDate,
   formatFileSize,
 } from "../../../lib/case-labels";
@@ -81,10 +83,13 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                         <span className="font-medium break-all">{document.fileName}</span>
                         <span className="text-slate-600">
                           {DOCUMENT_FILE_TYPE_LABELS[document.fileType]} ·{" "}
-                          {formatFileSize(document.fileSize)} · {formatDate(document.createdAt)}
+                          {formatFileSize(document.fileSize)} · {formatDate(document.createdAt)} ·{" "}
+                          {DOCUMENT_STATUS_LABELS[document.status]}
                         </span>
                       </span>
-                      <DocumentDownload caseId={id} documentId={document.id} />
+                      {isDownloadable(document.status) ? (
+                        <DocumentDownload caseId={id} documentId={document.id} />
+                      ) : null}
                     </li>
                   ))}
                 </ul>

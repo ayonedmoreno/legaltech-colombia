@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   CASE_STATUS_LABELS,
   CASE_TYPES,
+  DOCUMENT_STATUS_LABELS,
   formatFileSize,
+  isDownloadable,
   isClosedStatus,
   splitByActivity,
 } from "./case-labels";
@@ -54,5 +56,15 @@ describe("file sizes", () => {
     [10 * 1024 * 1024, "10 MB"],
   ])("shows %i bytes as %s", (bytes, text) => {
     expect(formatFileSize(bytes)).toBe(text);
+  });
+});
+
+describe("document security treatment in the UI", () => {
+  it("offers a download only for CLEAN documents", () => {
+    const statuses = Object.keys(DOCUMENT_STATUS_LABELS) as Array<
+      keyof typeof DOCUMENT_STATUS_LABELS
+    >;
+    expect(statuses).toHaveLength(6);
+    expect(statuses.filter(isDownloadable)).toEqual(["CLEAN"]);
   });
 });
