@@ -152,7 +152,12 @@ La Fase 1 se da por cerrada solo cuando se cumple todo lo siguiente:
 
 *Criterio cumplido el 2026-09-27: commit de cierre `ef7920c` en `main`, CI verde (run 36360859619), aprobado por el responsable del proyecto.*
 
-*(2026-09-27: la Fase 2 comenzó con la primera rebanada de `Case` aprobada —crear, listar y consultar los casos propios—; el resto de Cases sigue fuera de alcance hasta su aprobación.)*
+**Cierre de la Fase 2 (Cases)** *(aprobado por el responsable del producto el 2026-09-27)*
+
+- Implementado: creación de casos (los 7 tipos de `PROJECT_SPEC.md` s.9, siempre en `DRAFT`, con historial y auditoría en la misma transacción), listado y consulta de los casos propios, aislamiento por propietario (404 para casos ajenos, inexistentes o con identificador inválido), y la máquina de estados documentada y preparada (`DATABASE_SPEC.md`), sin ninguna transición habilitada.
+- Criterio de §6 cumplido: un usuario solo ve sus casos (tests de IDOR).
+- **El cuestionario dinámico no se implementa:** `PROJECT_SPEC.md` s.9 paso 3 solo enuncia que existe, y ningún documento define sus preguntas. No se inventa contenido jurídico (s.31); se implementará cuando exista contenido aprobado.
+- Siguen pendientes V1-V8 (estados del caso, §7) y P2.
 
 **Fuera de alcance por ahora:** Cases, Documents, OCR, Pricing, Payments, Legal AI, RAG, workflow profesional y workflow administrativo completo.
 

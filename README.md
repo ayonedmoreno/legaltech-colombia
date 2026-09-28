@@ -13,10 +13,12 @@ LegalTech platform for traffic and transport infractions in Colombia.
   protected empty `/panel`, the auth policy and the development seed. Emails go through an outbox;
   in development `pnpm email:dispatch` writes them to `.dev-mail/` (real delivery arrives with the
   Phase 3 worker).
-- **Phase 2 (Cases), first slice:** a user creates cases (the 7 types of PROJECT_SPEC s.9, always in
+- **Phase 2 (Cases) completed** (closure approved on 2026-09-27; `docs/ARCHITECTURE_REPORT.md` §5): a
+  user creates cases (the 7 types of PROJECT_SPEC s.9, always in
   `DRAFT`), lists and reads their own (`/api/cases`; web `/casos`, `/casos/nuevo`, `/casos/[id]`,
-  and active/closed cases in `/panel`). No status transitions, questionnaire, documents, pricing,
-  payments or Legal AI yet; no MFA.
+  and active/closed cases in `/panel`). The case state machine is documented and prepared as a pure domain
+  layer, with no transition enabled. No questionnaire (its questions are not defined in the
+  documents), documents, pricing, payments or Legal AI yet; no MFA.
 
 ## Prerequisites
 
