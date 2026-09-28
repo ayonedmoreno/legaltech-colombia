@@ -9,6 +9,9 @@ import { LOGIN_LOCK_NAMESPACE, PrismaAuthRepository, loginLockKey } from "./auth
 import { AuthService } from "./auth.service.js";
 import { PrismaCasesRepository } from "../cases/cases.repository.js";
 import { CasesService } from "../cases/cases.service.js";
+import { PrismaDocumentsRepository } from "../documents/documents.repository.js";
+import { DocumentsService } from "../documents/documents.service.js";
+import { MemoryStorageProvider } from "../../storage/storage.fake.js";
 import {
   DuplicateEmailError,
   LoginAttemptUnavailableError,
@@ -1042,6 +1045,13 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
         health: { checkDatabase: async () => true },
         authService: new AuthService({ repository, isProduction: false }),
         casesService: new CasesService({ repository: new PrismaCasesRepository(prisma) }),
+        documentsService: new DocumentsService({
+          repository: new PrismaDocumentsRepository(prisma),
+          cases: new PrismaCasesRepository(prisma),
+          storage: new MemoryStorageProvider(),
+          maxBytes: TEST_ENV.DOCUMENT_MAX_BYTES,
+          downloadUrlTtlSeconds: TEST_ENV.DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
+        }),
       });
     }
 

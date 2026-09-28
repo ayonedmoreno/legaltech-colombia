@@ -21,6 +21,7 @@ const EXPECTED: Record<string, string[]> = {
   audit_logs: ["SELECT", "INSERT"],
   cases: ["SELECT", "INSERT"],
   case_status_history: ["SELECT", "INSERT"],
+  documents: ["SELECT", "INSERT"],
   _prisma_migrations: [],
 };
 

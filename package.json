@@ -22,7 +22,8 @@
     "db:migrate": "pnpm --filter @legaltech/database run migrate:dev",
     "db:deploy": "pnpm --filter @legaltech/database run migrate:deploy",
     "db:seed": "pnpm --filter @legaltech/api run seed:dev",
-    "email:dispatch": "pnpm --filter @legaltech/api run email:dispatch"
+    "email:dispatch": "pnpm --filter @legaltech/api run email:dispatch",
+    "storage:init": "pnpm --filter @legaltech/api run storage:init"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

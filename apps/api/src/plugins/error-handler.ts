@@ -7,6 +7,8 @@ const KNOWN: Record<number, { code: ApiErrorCode; message: string }> = {
   401: { code: "UNAUTHENTICATED", message: "Se requiere autenticación." },
   403: { code: "FORBIDDEN", message: "No tienes permiso para esta acción." },
   404: { code: "NOT_FOUND", message: "Recurso no encontrado." },
+  413: { code: "PAYLOAD_TOO_LARGE", message: "La solicitud supera el tamaño máximo permitido." },
+  415: { code: "VALIDATION_ERROR", message: "Tipo de contenido no admitido." },
   429: { code: "RATE_LIMITED", message: "Demasiadas solicitudes. Inténtalo más tarde." },
 };
 

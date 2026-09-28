@@ -7,6 +7,8 @@ import { authRoutes } from "./modules/auth/auth.routes.js";
 import type { AuthService } from "./modules/auth/auth.service.js";
 import { casesRoutes } from "./modules/cases/cases.routes.js";
 import type { CasesService } from "./modules/cases/cases.service.js";
+import { documentsRoutes } from "./modules/documents/documents.routes.js";
+import type { DocumentsService } from "./modules/documents/documents.service.js";
 import { healthRoutes, type HealthDeps } from "./modules/health/health.routes.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 
@@ -15,6 +17,7 @@ export interface AppOptions {
   health: HealthDeps;
   authService: AuthService;
   casesService: CasesService;
+  documentsService: DocumentsService;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -24,6 +27,7 @@ export async function buildApp({
   health,
   authService,
   casesService,
+  documentsService,
 }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
@@ -63,6 +67,12 @@ export async function buildApp({
     prefix: "/api/cases",
     authService,
     casesService,
+    appOrigin: env.APP_ORIGIN,
+  });
+  await app.register(documentsRoutes, {
+    prefix: "/api/cases",
+    authService,
+    documentsService,
     appOrigin: env.APP_ORIGIN,
   });
 

@@ -65,6 +65,16 @@ const envSchema = z.object({
       "must be a bare origin (scheme://host[:port]) with no trailing slash, path, query or fragment",
   }),
   DATABASE_URL: z.string().min(1),
+  // Upper bound of an uploaded document, in bytes. 10 MB is a provisional technical value:
+  // SECURITY_SPEC.md §11 requires a limit but the documents fix no figure.
+  DOCUMENT_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100 * 1024 * 1024)
+    .default(10 * 1024 * 1024),
+  // Lifetime of a document download URL (short-lived presigned URL, ARCHITECTURE_REPORT §2).
+  DOCUMENT_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(1).max(900).default(60),
   // Addresses of reverse proxies whose X-Forwarded-For the API may trust (comma-separated IPs
   // or CIDRs). Empty by default: request.ip is then always the TCP peer. The Next.js rewrite
   // (ADR-002) neither adds the client IP nor strips a client-sent X-Forwarded-For, so trusting

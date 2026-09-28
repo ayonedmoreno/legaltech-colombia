@@ -6,6 +6,9 @@ import { AuthService } from "../modules/auth/auth.service.js";
 import type { Clock } from "../modules/auth/auth.session.js";
 import { FakeCasesRepository } from "../modules/cases/cases.repository.fake.js";
 import { CasesService } from "../modules/cases/cases.service.js";
+import { FakeDocumentsRepository } from "../modules/documents/documents.repository.fake.js";
+import { DocumentsService } from "../modules/documents/documents.service.js";
+import { MemoryStorageProvider } from "../storage/storage.fake.js";
 
 export const TEST_ENV = loadEnv({
   NODE_ENV: "test",
@@ -18,6 +21,8 @@ export interface TestApp {
   app: FastifyInstance;
   repository: FakeAuthRepository;
   casesRepository: FakeCasesRepository;
+  documentsRepository: FakeDocumentsRepository;
+  storage: MemoryStorageProvider;
 }
 
 export interface BuildTestAppOptions {
@@ -30,6 +35,11 @@ export interface BuildTestAppOptions {
   repository?: FakeAuthRepository;
   /** A preconfigured fake cases repository; a fresh one is created if omitted. */
   casesRepository?: FakeCasesRepository;
+  /** A preconfigured fake documents repository (built over the cases one if omitted). */
+  documentsRepository?: FakeDocumentsRepository;
+  storage?: MemoryStorageProvider;
+  /** Upload limit in bytes; the default of the environment otherwise. */
+  documentMaxBytes?: number;
   /** Trusted proxy addresses (API_TRUST_PROXY); none by default, as in the real default. */
   trustProxy?: string[];
 }
@@ -42,6 +52,10 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
     repository.clock = options.clock;
     casesRepository.clock = options.clock;
   }
+  const documentsRepository =
+    options.documentsRepository ?? new FakeDocumentsRepository(casesRepository);
+  if (options.clock) documentsRepository.clock = options.clock;
+  const storage = options.storage ?? new MemoryStorageProvider();
 
   const authService = new AuthService({
     repository,
@@ -56,7 +70,15 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
     health: { checkDatabase: async () => options.databaseUp ?? true },
     authService,
     casesService: new CasesService({ repository: casesRepository }),
+    documentsService: new DocumentsService({
+      repository: documentsRepository,
+      cases: casesRepository,
+      storage,
+      maxBytes: options.documentMaxBytes ?? TEST_ENV.DOCUMENT_MAX_BYTES,
+      downloadUrlTtlSeconds: TEST_ENV.DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
+      clock: options.clock,
+    }),
   });
 
-  return { app, repository, casesRepository };
+  return { app, repository, casesRepository, documentsRepository, storage };
 }
