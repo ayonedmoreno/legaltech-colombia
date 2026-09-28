@@ -1,9 +1,9 @@
 # API_SPEC.md
 
-**Versión:** 0.4 (rebanada `Case`, Fase 2)
+**Versión:** 0.5 (documentos del caso, Fase 3)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado (cierre de la Fase 1 y rebanada `Case`, 2026-09-27). Describe la implementación actual.
-**Alcance:** autenticación, infraestructura y la primera rebanada de casos (crear, listar y consultar los propios). Documentos, pagos y demás se añaden con su fase.
+**Estado:** Aprobado (cierre de las Fases 1 y 2; primera rebanada de la Fase 3, 2026-09-27). Describe la implementación actual.
+**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios). OCR, pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
 Este documento se mantiene manualmente junto a los esquemas de `packages/contracts` (la API todavía no genera OpenAPI). Toda modificación de un endpoint actualiza este archivo en el mismo cambio.
@@ -45,6 +45,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.logout_all` | Cierre de todas las sesiones del usuario (`POST /api/auth/logout-all`) | Usuario | — |
 | `auth.session.revoked` | Revocación de una sesión propia por ID (`DELETE /api/auth/sessions/:sessionId`) | Usuario | — (la sesión revocada es la entidad) |
 | `case.created` | Creación de un caso (`POST /api/cases`), en la misma transacción que el caso y su historial | Usuario propietario | — (el caso es la entidad y `case_id`; `new_value`: `type`, `status`) |
+| `document.uploaded` | Documento subido a un caso propio (`POST /api/cases/:caseId/documents`), en la misma transacción que la fila del documento | Usuario propietario | — (el documento es la entidad y el caso, `case_id`; `new_value`: `fileType`, `fileSize`, `status`; nunca el nombre del archivo) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
@@ -74,6 +75,8 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 | 403 | `CSRF_INVALID` | Token CSRF ausente o inválido, u origen no permitido |
 | 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002) |
 | 404 | `NOT_FOUND` | Ruta inexistente, o recurso ajeno, inexistente o con identificador inválido (IDOR, ADR-003) |
+| 413 | `PAYLOAD_TOO_LARGE` | Cuerpo mayor que el límite del endpoint (por ejemplo, un documento de más de 10 MB) |
+| 415 | `VALIDATION_ERROR` | `Content-Type` no admitido por el endpoint |
 | 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); mismo mensaje en ambos casos |
 | 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
 | 500 | `INTERNAL_ERROR` | Error inesperado, sin detalles internos |
@@ -259,6 +262,40 @@ Devuelve un caso propio con su historial de estados (`case:read`).
 
 **Fuera de esta rebanada:** `PATCH /api/cases/:caseId` (`PROJECT_SPEC.md` s.28), la cancelación y cualquier otra transición de estado (la máquina de estados está documentada en `DATABASE_SPEC.md`; cada transición se expone en la fase que posee su disparador), el cuestionario dinámico y los endpoints de documentos, análisis, precio, pago y actuaciones.
 
+### `POST /api/cases/:caseId/documents`
+
+Sube un documento a un caso propio (`document:upload`; `PROJECT_SPEC.md` s.9 paso 4, s.16). Requiere sesión y CSRF, que se comprueban **antes** de leer el cuerpo.
+
+- **Cuerpo:** el archivo en bruto, con `Content-Type: application/octet-stream`.
+- **Encabezado `X-File-Name`:** nombre original del archivo, codificado con `encodeURIComponent`. Obligatorio; de 1 a 255 caracteres una vez decodificado, sin `/`, `\` ni caracteres de control. No va en la URL, para que no aparezca en logs.
+- **Tipos admitidos:** PDF, JPEG y PNG, determinados por la firma del contenido (magic bytes), no por la extensión ni por el `Content-Type`.
+- **Tamaño máximo:** 10 MB (`DOCUMENT_MAX_BYTES`). Es un valor técnico provisional y configurable: los documentos exigen un límite (`SECURITY_SPEC.md` §11) pero no fijan la cifra.
+- **Estado del caso:** solo en `DRAFT`.
+- **201:** `{ "document": Document }`, con `status: "UPLOADED"` y `ocrStatus: "NOT_STARTED"`.
+- **400:** `VALIDATION_ERROR` — cuerpo vacío, falta `X-File-Name` o es inválido, o el contenido no es PDF, JPEG ni PNG.
+- **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
+- **403:** `FORBIDDEN` — el caso propio no está en `DRAFT` (no ocurre todavía: no hay transiciones).
+- **404:** `NOT_FOUND` — caso ajeno, inexistente o con identificador inválido, o policy denegada (roles distintos de `USER`).
+- **413:** `PAYLOAD_TOO_LARGE`. **415:** `VALIDATION_ERROR` si el `Content-Type` no es `application/octet-stream`.
+- **Auditoría:** `document.uploaded`.
+
+### `GET /api/cases/:caseId/documents`
+
+Lista los documentos de un caso propio (`document:list`), del más reciente al más antiguo.
+
+- **200:** `{ "documents": [Document] }`. **401:** `UNAUTHENTICATED`. **404:** `NOT_FOUND` (como arriba).
+- Petición segura (GET): sin CSRF ni evento de auditoría.
+
+### `GET /api/cases/:caseId/documents/:documentId/download`
+
+Autoriza la descarga de un documento propio (`document:download`) y devuelve una URL prefirmada de vida corta del almacenamiento privado (ARCHITECTURE_REPORT §2; `SECURITY_SPEC.md` §11).
+
+- **200:** `{ "url": "https://…", "expiresAt": "ISO-8601" }`. La URL caduca a los 60 s (`DOCUMENT_DOWNLOAD_URL_TTL_SECONDS`) y fuerza `Content-Disposition: attachment` con el nombre original y el `Content-Type` del tipo detectado al subirlo.
+- **401:** `UNAUTHENTICATED`. **404:** `NOT_FOUND` — documento de otro caso, caso ajeno o inexistente, o identificadores inválidos.
+- Petición segura (GET): sin CSRF ni evento de auditoría (como las demás lecturas del propietario).
+
+**Fuera de esta rebanada:** OCR, antivirus, limpieza de metadata, versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
+
 ## Esquemas
 
 ### `User`
@@ -302,6 +339,22 @@ Nunca se devuelven `passwordHash`, hashes de tokens ni tokens en claro.
 ```
 
 Los tipos son los 7 de `PROJECT_SPEC.md` s.9 paso 2 (comparendo, infracción, fotodetección, transporte, notificación, actuación administrativa, otro). No se devuelve el propietario: siempre es el usuario autenticado.
+
+### `Document`
+
+```json
+{
+  "id": "uuid",
+  "fileName": "string",
+  "fileType": "PDF | JPEG | PNG",
+  "fileSize": 12345,
+  "status": "UPLOADED",
+  "ocrStatus": "NOT_STARTED",
+  "createdAt": "ISO-8601"
+}
+```
+
+No se devuelven la clave de almacenamiento ni el usuario que lo subió.
 
 ### `CaseStatusChange`
 

@@ -1,10 +1,10 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.3 (rebanada `Case`, Fase 2)
+**Versión:** 0.4 (documentos del caso, Fase 3)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado (cierre de la Fase 1, 2026-09-27; rebanada `Case` aprobada el 2026-09-27)
-**Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2, primera rebanada).
-**Fuera de alcance:** `Infraction`, `Authority`, `Document`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
+**Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; primera rebanada de la Fase 3 aprobada el 2026-09-27)
+**Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
+**Fuera de alcance:** `Infraction`, `Authority`, `DocumentVersion`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
 
 ## Convenciones
 
@@ -23,6 +23,9 @@
 | `SessionRevokedReason` | `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_RESET`, `PASSWORD_CHANGE`, `ROTATED`, `ROLE_CHANGE`, `ADMIN_REVOKE`, `EXPIRED` |
 | `EmailOutboxKind` | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `PASSWORD_RESET_COMPLETED` |
 | `CaseType` | `TRAFFIC_CITATION` (comparendo), `INFRACTION` (infracción), `PHOTO_ENFORCEMENT` (fotodetección), `TRANSPORT` (transporte), `NOTIFICATION` (notificación), `ADMINISTRATIVE_PROCEEDING` (actuación administrativa), `OTHER` (otro): los 7 tipos de `PROJECT_SPEC.md` s.9 paso 2, sin añadir ninguno |
+| `DocumentFileType` | `PDF`, `JPEG`, `PNG` (`PROJECT_SPEC.md` s.9 paso 4; fotografías y escaneos llegan como JPEG, PNG o PDF) |
+| `DocumentStatus` | `UPLOADED` (primera rebanada; los demás valores llegan con el antivirus y la revisión) |
+| `DocumentOcrStatus` | `NOT_STARTED` (primera rebanada; los demás valores llegan con el OCR, P4) |
 | `CaseStatus` | Los 15 estados iniciales de `PROJECT_SPEC.md` s.8: `DRAFT`, `DOCUMENTS_PENDING`, `PRELIMINARY_ANALYSIS`, `PAYMENT_PENDING`, `PAID`, `LEGAL_REVIEW`, `DOCUMENT_PREPARATION`, `READY_TO_FILE`, `FILED`, `WAITING_RESPONSE`, `RESPONSE_RECEIVED`, `FOLLOW_UP`, `RESOLVED`, `CLOSED`, `CANCELLED` |
 
 ## Tablas
@@ -231,6 +234,28 @@ Historial de estados de cada caso (`PROJECT_SPEC.md` s.8: "todos los cambios de 
 - Append-only para la aplicación (solo `SELECT` e `INSERT`).
 - La creación de un caso escribe, en una sola transacción, el caso, su entrada `NULL → DRAFT` y el evento `case.created` (con `case_id`): se guarda todo o nada.
 
+### `documents`
+
+Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse a un caso"). El archivo no se guarda en PostgreSQL sino en almacenamiento de objetos privado (s.16; ADR-001 punto 8), detrás de `StorageProvider`; aquí solo están sus metadatos.
+
+| Columna | Tipo | Restricciones |
+|---|---|---|
+| `id` | uuid | PK |
+| `case_id` | uuid | NOT NULL, FK `cases(id)` ON DELETE RESTRICT |
+| `file_name` | text | NOT NULL (nombre original, de 1 a 255 caracteres, sin rutas ni caracteres de control) |
+| `file_type` | `DocumentFileType` | NOT NULL (determinado por el contenido del archivo, no por su extensión) |
+| `storage_key` | text | NOT NULL, UNIQUE (`cases/{case_id}/documents/{id}`: sin el nombre del archivo) |
+| `file_size` | integer | NOT NULL, CHECK `file_size > 0` (bytes) |
+| `uploaded_by_user_id` | uuid | NOT NULL, FK `users(id)` ON DELETE RESTRICT |
+| `created_at` | timestamptz | NOT NULL |
+| `status` | `DocumentStatus` | NOT NULL, DEFAULT `UPLOADED` |
+| `ocr_status` | `DocumentOcrStatus` | NOT NULL, DEFAULT `NOT_STARTED` |
+
+- Índice: `(case_id, created_at)`.
+- Solo `SELECT` e `INSERT` para el rol de aplicación: en esta rebanada un documento no cambia ni se borra.
+- El archivo se escribe en el almacenamiento antes que la fila; la fila y `document.uploaded` (con `case_id`) se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla, se borra el objeto recién escrito; si también falla ese borrado, queda un objeto huérfano sin fila, que nadie puede descargar (se registra en el log).
+- Sin `DocumentVersion`, antivirus ni limpieza de metadata en esta rebanada (ver `SECURITY_SPEC.md` §12).
+
 ## Relaciones
 
 ```
@@ -242,6 +267,8 @@ users 1 ── * email_outbox
 users 1 ── * cases (propietario)
 cases 1 ── * case_status_history
 cases 1 ── * audit_logs (case_id)
+cases 1 ── * documents
+users 1 ── * documents (uploaded_by)
 ```
 
 ## Migraciones
@@ -250,6 +277,7 @@ cases 1 ── * audit_logs (case_id)
 - `email_outbox` (Sprint 1B): tabla `email_outbox` y enum `email_outbox_kind`.
 - `app_role_least_privilege` (Sprint 1B): el rol de aplicación pasa a tener solo los permisos de la tabla siguiente y deja de recibir permisos por defecto.
 - `cases` (Fase 2): enums `case_type` y `case_status`, tablas `cases` y `case_status_history`, columna `audit_logs.case_id`, y sus permisos.
+- `documents` (Fase 3): enums `document_file_type`, `document_status` y `document_ocr_status`, tabla `documents` y sus permisos.
 - Cada migración que cree una tabla concede en ella, explícitamente, los permisos que la aplicación necesite (y los añade al test `database.privileges.integration.test.ts`); sin ese `GRANT`, el rol de aplicación no puede usarla.
 - Toda modificación al esquema actualiza este documento en el mismo cambio.
 
@@ -261,6 +289,7 @@ El rol de propietario (migraciones) crea las tablas; el rol de aplicación (`DAT
 |---|---|
 | `users`, `sessions`, `email_verification_tokens`, `password_reset_tokens`, `email_outbox` | `SELECT`, `INSERT`, `UPDATE` |
 | `audit_logs` | `SELECT`, `INSERT` (append-only) |
+| `documents` | `SELECT`, `INSERT` |
 | `cases`, `case_status_history` | `SELECT`, `INSERT` (sin transiciones en esta rebanada; `UPDATE` en `cases` se concederá con la primera transición) |
 | `_prisma_migrations` | ninguno |
 

@@ -1,8 +1,8 @@
 # SECURITY_SPEC.md
 
-**Versión:** 0.3 (línea base; rebanada `Case` de la Fase 2)
+**Versión:** 0.4 (línea base; documentos del caso, Fase 3)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado (cierre de la Fase 1 y rebanada `Case`, 2026-09-27)
+**Estado:** Aprobado (cierre de las Fases 1 y 2; primera rebanada de la Fase 3, 2026-09-27)
 **Referencias:** `PROJECT_SPEC.md` s.26, s.27; ADR-002; ADR-003. Marcos de referencia: OWASP Top 10 y OWASP ASVS.
 
 Este documento fija la línea base de seguridad. Cada fase la amplía en el mismo cambio que introduce nuevas superficies (documentos, pagos, IA).
@@ -26,6 +26,7 @@ La API exige `NODE_ENV` explícito (`development`, `test` o `production`); sin �
 Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request, protección explícita contra IDOR (404 para recursos ajenos), policies puras y tests de acceso cruzado.
 
 - Casos (Fase 2, primera rebanada): `case:create`, `case:list` y `case:read` solo para el rol `USER` y sobre sus propios casos; los repositorios filtran siempre por el usuario y un caso ajeno, inexistente o con identificador inválido responde 404. PROFESSIONAL, ADMIN y SUPER_ADMIN no acceden a casos hasta sus fases (asignaciones, acceso administrativo justificado y auditado, §11).
+- Documentos (Fase 3, primera rebanada): `document:upload`, `document:list` y `document:download` solo para `USER` y sobre documentos de sus propios casos; el caso se busca siempre con el usuario y un documento se busca siempre con su caso, así que un caso o documento ajeno, inexistente o con identificador inválido responde 404.
 - Estados del caso (`DATABASE_SPEC.md`, «Estados y transiciones del caso»): ninguna transición está habilitada todavía y el usuario no inicia ningún cambio de estado. `PAID` solo lo provocará un webhook de pago verificado (`PROJECT_SPEC.md` s.23); las transiciones de un profesional, solo sobre casos asignados, en su fase. Cada transición, al habilitarse, escribirá el historial y `case.status_changed` en la misma transacción que el cambio.
 
 ## 4. Transporte y navegador
@@ -85,7 +86,7 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 
 | Superficie | Fase | Controles previstos |
 |---|---|---|
-| Documentos | 3 | Bucket privado, URLs prefirmadas cortas, verificación del contenido real, antivirus, límites de tamaño, limpieza de metadata, acceso siempre autorizado |
+| Documentos | 3 | Bucket privado, URLs prefirmadas cortas, verificación del contenido real, antivirus, límites de tamaño, limpieza de metadata, acceso siempre autorizado. **Implementado en la primera rebanada:** bucket privado detrás de `StorageProvider` (API S3), URL prefirmada de 60 s emitida solo tras autorizar al propietario y con `Content-Disposition: attachment`, tipo verificado por la firma del contenido (PDF, JPEG, PNG), límite de 10 MB (valor técnico provisional, configurable), sesión y CSRF comprobados antes de leer el cuerpo, clave de almacenamiento sin el nombre del archivo. **Pendiente:** antivirus y limpieza de metadata (§12). |
 | Pagos | 6 | Firma de webhook, verificación server-to-server, idempotencia, nunca activar por el frontend |
 | IA y documentos no confiables | 7 | El contenido de documentos se trata como no confiable (inyección de instrucciones), salidas validadas, citas obligatorias, registro `AiRun` |
 | Acceso administrativo a datos de terceros | 9 | Justificación registrada y auditoría reforzada |
@@ -99,6 +100,8 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 - [ ] Límite por IP por cliente real: borde de confianza que fija `X-Forwarded-For` y `API_TRUST_PROXY` acorde (P3). Hasta entonces el límite por IP es global y no se publica (§7).
 - [ ] Decisiones jurídicas de datos personales y términos definidas con validación colombiana.
 - [ ] Rotación y gestión de secretos en el entorno de despliegue.
+- [ ] Documentos: antivirus y limpieza de metadata antes de aceptar documentos reales (siguiente rebanada obligatoria de la Fase 3). Hasta entonces, un documento solo lo descarga su propietario, que es quien lo subió.
+- [ ] Almacenamiento de producción (P3): proveedor y región con validación jurídica de la transferencia internacional de datos personales; bucket sin acceso público, cifrado en reposo y credenciales con permisos solo sobre ese bucket.
 - [ ] Entrega real de email: proveedor y worker de la Fase 3 (ADR-001). En el Sprint 1B el outbox solo se despacha con un comando de desarrollo que escribe los mensajes en ficheros locales; sin esto, verificación de email y recuperación de contraseña no llegan al usuario.
 
 ## 13. Respuesta a incidentes
