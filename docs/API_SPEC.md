@@ -1,8 +1,8 @@
 # API_SPEC.md
 
-**Versión:** 0.5 (documentos del caso, Fase 3)
-**Fecha:** 2026-09-27
-**Estado:** Aprobado (cierre de las Fases 1 y 2; primera rebanada de la Fase 3, 2026-09-27). Describe la implementación actual.
+**Versión:** 0.6 (antivirus y metadata de documentos, Fase 3)
+**Fecha:** 2026-09-28
+**Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual.
 **Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios). OCR, pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
@@ -46,6 +46,9 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.session.revoked` | Revocación de una sesión propia por ID (`DELETE /api/auth/sessions/:sessionId`) | Usuario | — (la sesión revocada es la entidad) |
 | `case.created` | Creación de un caso (`POST /api/cases`), en la misma transacción que el caso y su historial | Usuario propietario | — (el caso es la entidad y `case_id`; `new_value`: `type`, `status`) |
 | `document.uploaded` | Documento subido a un caso propio (`POST /api/cases/:caseId/documents`), en la misma transacción que la fila del documento | Usuario propietario | — (el documento es la entidad y el caso, `case_id`; `new_value`: `fileType`, `fileSize`, `status`; nunca el nombre del archivo) |
+| `document.scan_clean` | El tratamiento de seguridad terminó sin amenazas (y, en JPEG o PNG, con su copia sin metadata): el documento pasa a `CLEAN`. Lo escribe el worker en la misma transacción que el estado | Sin actor (sistema) | — (documento y `case_id`; `new_value`: `status`) |
+| `document.scan_infected` | El antivirus detectó una amenaza: el documento pasa a `INFECTED` | Sin actor (sistema) | — (`new_value`: `status`, `signature`) |
+| `document.scan_failed` | El tratamiento no se pudo completar tras agotar los intentos: el documento pasa a `SCAN_FAILED` | Sin actor (sistema) | — (`new_value`: `status`, `attempts`) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
@@ -271,7 +274,7 @@ Sube un documento a un caso propio (`document:upload`; `PROJECT_SPEC.md` s.9 pas
 - **Tipos admitidos:** PDF, JPEG y PNG, determinados por la firma del contenido (magic bytes), no por la extensión ni por el `Content-Type`.
 - **Tamaño máximo:** 10 MB (`DOCUMENT_MAX_BYTES`). Es un valor técnico provisional y configurable: los documentos exigen un límite (`SECURITY_SPEC.md` §11) pero no fijan la cifra.
 - **Estado del caso:** solo en `DRAFT`.
-- **201:** `{ "document": Document }`, con `status: "UPLOADED"` y `ocrStatus: "NOT_STARTED"`.
+- **201:** `{ "document": Document }`, con `status: "PENDING_SCAN"` y `ocrStatus: "NOT_STARTED"`. La respuesta no espera al antivirus: en la misma transacción que la fila se encola el job `document.scan`, que procesa el worker.
 - **400:** `VALIDATION_ERROR` — cuerpo vacío, falta `X-File-Name` o es inválido, o el contenido no es PDF, JPEG ni PNG.
 - **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
 - **403:** `FORBIDDEN` — el caso propio no está en `DRAFT` (no ocurre todavía: no hay transiciones).
@@ -290,11 +293,13 @@ Lista los documentos de un caso propio (`document:list`), del más reciente al m
 
 Autoriza la descarga de un documento propio (`document:download`) y devuelve una URL prefirmada de vida corta del almacenamiento privado (ARCHITECTURE_REPORT §2; `SECURITY_SPEC.md` §11).
 
+- **Solo un documento `CLEAN`.** Se descarga la versión que pasó el tratamiento de seguridad: la copia sin metadata para JPEG y PNG, el original intacto para PDF.
 - **200:** `{ "url": "https://…", "expiresAt": "ISO-8601" }`. La URL caduca a los 60 s (`DOCUMENT_DOWNLOAD_URL_TTL_SECONDS`) y fuerza `Content-Disposition: attachment` con el nombre original y el `Content-Type` del tipo detectado al subirlo.
 - **401:** `UNAUTHENTICATED`. **404:** `NOT_FOUND` — documento de otro caso, caso ajeno o inexistente, o identificadores inválidos.
+- **403:** `FORBIDDEN` — documento propio que no está `CLEAN` (`UPLOADED`, `PENDING_SCAN`, `SCANNING`, `INFECTED` o `SCAN_FAILED`), con un único mensaje genérico; no se genera ninguna URL. El propietario ya ve el estado en el listado.
 - Petición segura (GET): sin CSRF ni evento de auditoría (como las demás lecturas del propietario).
 
-**Fuera de esta rebanada:** OCR, antivirus, limpieza de metadata, versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
+**Fuera de esta rebanada:** OCR, limpieza de metadata de PDF (decisión pendiente), volver a tratar un documento `SCAN_FAILED`, versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
 
 ## Esquemas
 
@@ -348,13 +353,13 @@ Los tipos son los 7 de `PROJECT_SPEC.md` s.9 paso 2 (comparendo, infracción, fo
   "fileName": "string",
   "fileType": "PDF | JPEG | PNG",
   "fileSize": 12345,
-  "status": "UPLOADED",
+  "status": "UPLOADED | PENDING_SCAN | SCANNING | CLEAN | INFECTED | SCAN_FAILED",
   "ocrStatus": "NOT_STARTED",
   "createdAt": "ISO-8601"
 }
 ```
 
-No se devuelven la clave de almacenamiento ni el usuario que lo subió.
+No se devuelven las claves de almacenamiento, el usuario que lo subió, los intentos ni la firma detectada.
 
 ### `CaseStatusChange`
 

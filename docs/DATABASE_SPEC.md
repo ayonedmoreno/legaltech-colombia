@@ -1,8 +1,8 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.4 (documentos del caso, Fase 3)
-**Fecha:** 2026-09-27
-**Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; primera rebanada de la Fase 3 aprobada el 2026-09-27)
+**Versión:** 0.5 (antivirus y metadata de documentos, Fase 3)
+**Fecha:** 2026-09-28
+**Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28)
 **Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
 **Fuera de alcance:** `Infraction`, `Authority`, `DocumentVersion`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
 
@@ -24,7 +24,7 @@
 | `EmailOutboxKind` | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `PASSWORD_RESET_COMPLETED` |
 | `CaseType` | `TRAFFIC_CITATION` (comparendo), `INFRACTION` (infracción), `PHOTO_ENFORCEMENT` (fotodetección), `TRANSPORT` (transporte), `NOTIFICATION` (notificación), `ADMINISTRATIVE_PROCEEDING` (actuación administrativa), `OTHER` (otro): los 7 tipos de `PROJECT_SPEC.md` s.9 paso 2, sin añadir ninguno |
 | `DocumentFileType` | `PDF`, `JPEG`, `PNG` (`PROJECT_SPEC.md` s.9 paso 4; fotografías y escaneos llegan como JPEG, PNG o PDF) |
-| `DocumentStatus` | `UPLOADED` (primera rebanada; los demás valores llegan con el antivirus y la revisión) |
+| `DocumentStatus` | `UPLOADED`, `PENDING_SCAN`, `SCANNING`, `CLEAN`, `INFECTED`, `SCAN_FAILED` (tratamiento de seguridad del documento; ver `documents`) |
 | `DocumentOcrStatus` | `NOT_STARTED` (primera rebanada; los demás valores llegan con el OCR, P4) |
 | `CaseStatus` | Los 15 estados iniciales de `PROJECT_SPEC.md` s.8: `DRAFT`, `DOCUMENTS_PENDING`, `PRELIMINARY_ANALYSIS`, `PAYMENT_PENDING`, `PAID`, `LEGAL_REVIEW`, `DOCUMENT_PREPARATION`, `READY_TO_FILE`, `FILED`, `WAITING_RESPONSE`, `RESPONSE_RECEIVED`, `FOLLOW_UP`, `RESOLVED`, `CLOSED`, `CANCELLED` |
 
@@ -248,13 +248,59 @@ Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse
 | `file_size` | integer | NOT NULL, CHECK `file_size > 0` (bytes) |
 | `uploaded_by_user_id` | uuid | NOT NULL, FK `users(id)` ON DELETE RESTRICT |
 | `created_at` | timestamptz | NOT NULL |
-| `status` | `DocumentStatus` | NOT NULL, DEFAULT `UPLOADED` |
+| `status` | `DocumentStatus` | NOT NULL, DEFAULT `PENDING_SCAN` (ver «Tratamiento de seguridad del documento») |
 | `ocr_status` | `DocumentOcrStatus` | NOT NULL, DEFAULT `NOT_STARTED` |
+| `scan_attempts` | integer | NOT NULL, DEFAULT 0, CHECK `scan_attempts >= 0` (tratamientos empezados) |
+| `scan_started_at` | timestamptz | NULL (inicio del tratamiento en curso; identifica el reclamo del worker) |
+| `scanned_at` | timestamptz | NULL (fin del tratamiento con `CLEAN`, `INFECTED` o `SCAN_FAILED`) |
+| `scan_signature` | text | NULL (solo con `INFECTED`: nombre de la firma que detectó el antivirus) |
+| `sanitized_storage_key` | text | NULL, UNIQUE (copia derivada sin metadata identificable; solo JPEG y PNG `CLEAN`) |
 
-- Índice: `(case_id, created_at)`.
-- Solo `SELECT` e `INSERT` para el rol de aplicación: en esta rebanada un documento no cambia ni se borra.
-- El archivo se escribe en el almacenamiento antes que la fila; la fila y `document.uploaded` (con `case_id`) se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla, se borra el objeto recién escrito; si también falla ese borrado, queda un objeto huérfano sin fila, que nadie puede descargar (se registra en el log).
-- Sin `DocumentVersion`, antivirus ni limpieza de metadata en esta rebanada (ver `SECURITY_SPEC.md` §12).
+- Índices: `(case_id, created_at)` y `(status)`.
+- El archivo se escribe en el almacenamiento antes que la fila; la fila, `document.uploaded` (con `case_id`) y el job `document.scan` se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla, se borra el objeto recién escrito; si también falla ese borrado, queda un objeto huérfano sin fila, que nadie puede descargar (se registra en el log).
+- **El original nunca se modifica ni se borra**: queda privado e intacto en `storage_key`. La copia derivada es un objeto aparte (`{storage_key}.sanitized`).
+- Sin `DocumentVersion` todavía.
+
+#### Tratamiento de seguridad del documento (Fase 3, segunda rebanada)
+
+Lo hace el worker (`apps/worker`), fuera de la petición HTTP: análisis antivirus con ClamAV dentro de nuestra infraestructura y, para JPEG y PNG, una copia derivada sin metadata identificable. **Solo un documento `CLEAN` se puede descargar**, y se descarga la versión que pasó el tratamiento: la copia derivada para JPEG y PNG, el original intacto para PDF.
+
+| Estado | Significado |
+|---|---|
+| `UPLOADED` | Guardado antes de que existiera el antivirus (primera rebanada), sin job. El worker, al arrancar, lo pasa a `PENDING_SCAN` y lo pone en cola. |
+| `PENDING_SCAN` | Pendiente de tratamiento, con un job `document.scan` en cola. Estado inicial de todo documento nuevo. |
+| `SCANNING` | Un worker lo reclamó y lo está tratando. |
+| `CLEAN` | Sin amenazas y, si es JPEG o PNG, con su copia derivada guardada. Estado final; el único descargable. |
+| `INFECTED` | El antivirus detectó una amenaza. Estado final; nunca se descarga. El original se conserva privado. |
+| `SCAN_FAILED` | No se pudo completar el tratamiento tras agotar los intentos (antivirus caído, tiempo agotado, respuesta inesperada, objeto ausente o fallo al quitar la metadata). Estado final en esta rebanada; nunca se descarga. Volver a tratarlo es una operación futura, no expuesta todavía. |
+
+Transiciones, todas con una sentencia condicional dentro de una transacción:
+
+| Desde | Hasta | Cuándo |
+|---|---|---|
+| (nuevo) | `PENDING_SCAN` | Subida: fila, `document.uploaded` y job en la misma transacción. |
+| `UPLOADED` | `PENDING_SCAN` | Arranque del worker (documentos anteriores al antivirus): estado y job en la misma transacción. |
+| `PENDING_SCAN` | `SCANNING` | Reclamo: `UPDATE … WHERE status = 'PENDING_SCAN'`; suma 1 a `scan_attempts` y fija `scan_started_at`. Solo un worker lo consigue. |
+| `SCANNING` | `SCANNING` | Reclamo de un tratamiento abandonado (`scan_started_at` más antiguo que el plazo de reclamo: el worker que lo tenía murió). |
+| `SCANNING` | `CLEAN`, `INFECTED` | Resultado. Solo lo escribe el worker que tiene el reclamo (mismo `scan_started_at`). |
+| `SCANNING` | `PENDING_SCAN` | Error transitorio con intentos pendientes: el job se reintenta. |
+| `SCANNING` | `SCAN_FAILED` | Error sin intentos pendientes (5 intentos). |
+| `SCANNING` | `PENDING_SCAN` | Arranque del worker: un `SCANNING` cuyo reclamo superó el plazo (el worker que lo tenía murió y pg-boss ya no lo reintenta) vuelve a `PENDING_SCAN` y se pone en cola, en la misma transacción. |
+
+- **Recuperación, no transición del caso:** las vueltas a `PENDING_SCAN` (reintento y arranque del worker) son recuperación de trabajos del tratamiento del documento; no cambian `scan_attempts` (lo suma el reclamo) ni el estado del `Case`.
+- **Idempotencia:** un job cuyo documento no está en `PENDING_SCAN` (ni es un `SCANNING` abandonado) no hace nada. Un job repetido o simultáneo nunca trata dos veces el mismo documento ni escribe dos resultados.
+- **Nunca `CLEAN` por defecto:** solo la respuesta exacta de "sin amenazas" de ClamAV produce `CLEAN`; cualquier otra respuesta, error o tiempo agotado es un error.
+- **Metadata** (decisión del 2026-09-28): JPEG: se recorre toda la estructura y se quitan los segmentos EXIF (con GPS) y XMP (`APP1`), IPTC (`APP13`) y comentarios (`COM`) donde aparezcan, también entre los barridos de un JPEG progresivo; los datos de imagen se copian byte a byte, sin recodificar, y se descarta lo que haya después de `EOI`. PNG: se quitan los bloques `eXIf`, `tEXt`, `zTXt` e `iTXt` (incluye XMP), se conservan los demás, que forman la imagen, y se descarta lo que haya después de `IEND`. El original nunca se sobrescribe: la copia derivada es otro objeto (`sanitized_storage_key`). **PDF: no se modifica**; su limpieza de metadata es una decisión pendiente. Si la limpieza falla, cuenta como error del tratamiento y el documento no se habilita.
+- **Auditoría** (sin actor: la hace el sistema), en la misma transacción que el cambio, con `case_id` y sin el nombre del archivo: `document.scan_clean`, `document.scan_infected` (con la firma en `new_value`) y `document.scan_failed`. El reclamo y los reintentos no se auditan.
+
+#### Cola de trabajos (pg-boss)
+
+pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgboss`, con la cola `document.scan`.
+
+- **El esquema y la cola los crea el rol propietario** con una migración versionada (el SQL que exporta `getConstructionPlans` de esa versión, y `create_queue` sin particionar, que no ejecuta DDL). Actualizar pg-boss exige una migración con su cambio de esquema.
+- En tiempo de ejecución pg-boss arranca con `migrate: false` (solo comprueba la versión), `reindex: false`, `persistQueueStats: false` y `schedule: false`: **ningún proceso de la aplicación ejecuta DDL**.
+- La API encola en la misma transacción que la fila del documento; el worker consume la cola y hace el mantenimiento de trabajos de pg-boss (caducidad y retención de trabajos, que es DML).
+- Reintentos de la cola: 4 (5 intentos en total), con espera creciente; el worker además cuenta los intentos en `scan_attempts` y marca `SCAN_FAILED` al agotarlos.
 
 ## Relaciones
 
@@ -278,23 +324,40 @@ users 1 ── * documents (uploaded_by)
 - `app_role_least_privilege` (Sprint 1B): el rol de aplicación pasa a tener solo los permisos de la tabla siguiente y deja de recibir permisos por defecto.
 - `cases` (Fase 2): enums `case_type` y `case_status`, tablas `cases` y `case_status_history`, columna `audit_logs.case_id`, y sus permisos.
 - `documents` (Fase 3): enums `document_file_type`, `document_status` y `document_ocr_status`, tabla `documents` y sus permisos.
+- `document_scan_states` y `document_scan` (Fase 3, segunda rebanada): nuevos estados de `document_status`; columnas `scan_*` y `sanitized_storage_key`; esquema `pgboss` con la cola `document.scan`; permisos del rol de worker.
 - Cada migración que cree una tabla concede en ella, explícitamente, los permisos que la aplicación necesite (y los añade al test `database.privileges.integration.test.ts`); sin ese `GRANT`, el rol de aplicación no puede usarla.
 - Toda modificación al esquema actualiza este documento en el mismo cambio.
 
-## Permisos del rol de aplicación
+## Permisos de los roles de ejecución
 
-El rol de propietario (migraciones) crea las tablas; el rol de aplicación (`DATABASE_URL`, en tiempo de ejecución) no es superusuario ni propietario de ninguna y tiene exactamente:
+El rol de propietario (migraciones) crea las tablas y el esquema `pgboss`. Dos roles de ejecución, ninguno superusuario, propietario ni con `CREATE`: el de la aplicación (`DATABASE_URL`, la API) y el del worker (`WORKER_DATABASE_URL`, desde la Fase 3). El rol de aplicación tiene exactamente:
 
 | Tabla | Permisos |
 |---|---|
 | `users`, `sessions`, `email_verification_tokens`, `password_reset_tokens`, `email_outbox` | `SELECT`, `INSERT`, `UPDATE` |
 | `audit_logs` | `SELECT`, `INSERT` (append-only) |
-| `documents` | `SELECT`, `INSERT` |
+| `documents` | `SELECT`, `INSERT` (nunca cambia el estado del tratamiento: eso lo hace el worker) |
+| Esquema `pgboss` | `USAGE`; `SELECT` en `pgboss.version` y `pgboss.queue`; `INSERT` y `SELECT (id)` en `pgboss.job_common` (encolar; `SELECT (id)` lo exige `INSERT … RETURNING id`) |
 | `cases`, `case_status_history` | `SELECT`, `INSERT` (sin transiciones en esta rebanada; `UPDATE` en `cases` se concederá con la primera transición) |
 | `_prisma_migrations` | ninguno |
 
 - Sin `DELETE` ni `TRUNCATE` en ninguna tabla, sin `CREATE` en el esquema, sin tablas temporales (el arranque de desarrollo retira `TEMPORARY` a `PUBLIC`) y sin permisos por defecto sobre tablas o secuencias futuras. `UPDATE` en `email_outbox` cubre también el `SELECT ... FOR UPDATE SKIP LOCKED` del despacho.
 - Lo comprueba `apps/api/src/database.privileges.integration.test.ts`, que en CI se ejecuta como el rol de aplicación.
+
+El rol del worker (`legaltech_worker`) tiene exactamente lo que el tratamiento de documentos necesita:
+
+| Tabla | Permisos |
+|---|---|
+| `documents` | `SELECT`, y `UPDATE` solo de `status`, `scan_attempts`, `scan_started_at`, `scanned_at`, `scan_signature` y `sanitized_storage_key` (permiso por columna: el nombre, la clave del original, el caso y el tamaño no se pueden cambiar) |
+| `audit_logs` | `INSERT` |
+| Esquema `pgboss` | `USAGE`; sin `CREATE` |
+| `pgboss.job`, `pgboss.job_common`, `pgboss.job_dependency` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (consumo, reintentos, caducidad y retención de trabajos) |
+| `pgboss.queue` | `SELECT`, `UPDATE` (la supervisión anota sus tiempos y conteos en la fila de la cola) |
+| `pgboss.version` | `SELECT`, y `UPDATE` solo de `cron_on`, `bam_on`, `flow_on`, `reindex_on` y `monitor_backoff_on` (tiempos de la supervisión; nunca la versión del esquema) |
+| `pgboss.schedule`, `pgboss.subscription`, `pgboss.bam`, `pgboss.warning` | `SELECT` |
+| Todo lo demás | ninguno |
+
+- Lo comprueba `apps/worker/src/worker.privileges.integration.test.ts`, como el rol del worker.
 - Las bases de desarrollo creadas antes de este cambio conservan `TEMPORARY` para `PUBLIC` hasta recrear el volumen (`pnpm db:down` y borrar el volumen) o ejecutar como propietario `REVOKE TEMPORARY ON DATABASE legaltech FROM PUBLIC;`. Producción replica esta separación con sus propios roles y secretos.
 
 ## Pendiente (fuera de esta rebanada)

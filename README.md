@@ -22,25 +22,28 @@ LegalTech platform for traffic and transport infractions in Colombia.
 - **Phase 3 (Documents), first slice:** a user uploads PDF, JPEG or PNG files (checked by content,
   10 MB) to their own `DRAFT` cases, lists them and downloads them through short-lived presigned
   URLs; files live in private S3-compatible storage behind `StorageProvider` (SeaweedFS in
-  development; production provider and region pending, P3). No OCR (P4), antivirus or metadata
-  cleaning yet (required before production).
+  development; production provider and region pending, P3).
+- **Phase 3 (Documents), second slice:** every document goes through a security treatment in
+  `apps/worker` (pg-boss job `document.scan`): ClamAV antivirus inside our infrastructure and, for
+  JPEG and PNG, a copy without identifying metadata (the original is kept untouched; PDFs are
+  never modified). Only a `CLEAN` document can be downloaded. No OCR yet (P4).
 
 ## Prerequisites
 
 - Node.js 22 (see `.nvmrc`)
 - pnpm 10 (`corepack enable`)
-- Docker (for local PostgreSQL)
+- Docker (for local PostgreSQL, SeaweedFS and ClamAV)
 
 ## Quick start
 
 ```bash
 cp .env.example .env          # development placeholders only; never commit real secrets
 pnpm install                  # generates pnpm-lock.yaml on first run: commit it
-pnpm db:up                    # PostgreSQL on 127.0.0.1:5432 and SeaweedFS (S3) on :8333 (Docker)
+pnpm db:up                    # PostgreSQL :5432, SeaweedFS (S3) :8333, ClamAV :3310 (Docker)
 pnpm db:deploy                # applies the Prisma migrations
 pnpm storage:init             # creates the local documents bucket (once)
 pnpm build
-pnpm dev                      # API on :4000, web on :3000 (open http://localhost:3000)
+pnpm dev                      # API :4000, web :3000 (http://localhost:3000) and the worker
 ```
 
 Checks: `GET http://127.0.0.1:4000/api/health/live` and `/api/health/ready`.
@@ -57,7 +60,7 @@ Optional: `pnpm db:seed` creates the development internal accounts (`PROFESSIONA
 | `pnpm test`                                     | Vitest on every workspace                           |
 | `pnpm build`                                    | Builds packages and apps (Turborepo)                |
 | `pnpm format` / `pnpm format:check`             | Prettier                                            |
-| `pnpm db:up` / `db:down`                        | Start / stop local PostgreSQL and SeaweedFS         |
+| `pnpm db:up` / `db:down`                        | Start / stop PostgreSQL, SeaweedFS and ClamAV       |
 | `pnpm db:validate` / `db:migrate` / `db:deploy` | Prisma validate / dev migration / deploy            |
 | `pnpm db:seed`                                  | Development internal accounts (never in production) |
 | `pnpm email:dispatch`                           | Sends pending outbox emails to `.dev-mail/` (dev)   |
@@ -71,14 +74,16 @@ Run `pnpm format` once after the first install and commit the result before open
 apps/
   api/        Fastify API (modular monolith). Modules: health, auth, notifications (email outbox), cases, documents
   web/        Next.js frontend: auth pages and /casos (Spanish routes), protected /panel; /api/* proxied
+  worker/     Background jobs (pg-boss): document antivirus (ClamAV) and metadata removal
 packages/
   contracts/       Shared Zod schemas and types
-  database/        Prisma schema, migrations, client (identity slice only)
+  database/        Prisma schema, migrations, client
+  storage/         Private object storage behind StorageProvider (S3-compatible)
   legal-engine/    Skeleton (Legal AI phase)
   pricing-engine/  Skeleton (Pricing phase)
   ai/              Skeleton (Legal AI phase)
   tooling/         Shared tsconfig bases
-infra/docker/      Local PostgreSQL and role bootstrap
+infra/docker/      Local PostgreSQL (and role bootstrap), SeaweedFS and ClamAV
 docs/              Specifications and ADRs
 ```
 

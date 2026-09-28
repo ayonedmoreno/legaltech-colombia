@@ -41,7 +41,7 @@
 | 15 | Datos personales sensibles: retención, borrado, consentimiento, transferencia internacional. | Validar con abogado colombiano. | **Decisión jurídica pendiente** |
 | 16 | Modelo operativo del servicio jurídico, autorización ante autoridades, T&C, reembolsos. | Validar con abogado colombiano. | **Decisión jurídica pendiente** |
 | 17 | Corpus jurídico sin responsable ni política de licencias. | Definir antes de la Fase 7. | Pendiente |
-| 18 | Validación de archivos limitada a tipo y tamaño. | Contenido real, antivirus y limpieza de metadata. | Diferido a Fase 3 |
+| 18 | Validación de archivos limitada a tipo y tamaño. | Contenido real, antivirus y limpieza de metadata. | Implementado en la Fase 3 (contenido real, antivirus ClamAV, metadata de JPEG y PNG); metadata de PDF pendiente |
 | 19 | Convenciones de idioma mezcladas. | Código, BD y API en inglés; UI y rutas en español. | **Aprobado (D4)** |
 
 ---
@@ -89,10 +89,11 @@ legaltech-colombia/
 ├── apps/
 │   ├── web/
 │   ├── api/
-│   └── worker/                # se crea cuando exista el primer job (Fase 3)
+│   └── worker/                # creado en la Fase 3 con el job document.scan (pg-boss)
 ├── packages/
 │   ├── contracts/
 │   ├── database/
+│   ├── storage/               # StorageProvider (S3-compatible), compartido por la API y el worker (Fase 3)
 │   ├── legal-engine/
 │   ├── pricing-engine/
 │   ├── ai/
