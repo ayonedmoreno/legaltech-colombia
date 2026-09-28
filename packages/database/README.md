@@ -14,6 +14,16 @@ Prisma schema, migrations and database client. Only this package may import `@pr
     (no `DELETE`/`TRUNCATE`, nothing on `_prisma_migrations`) and no default privileges.
   - `20260927140000_cases`: first Case slice (`cases`, `case_status_history`, enums `case_type`
     and `case_status`, `audit_logs.case_id`), with SELECT/INSERT only for the application role.
+  - `20260927150000_documents`: document metadata (`documents` and its enums); the files live in
+    object storage.
+  - `20260928100000_document_scan_states` and `20260928100100_document_scan`: the document security
+    treatment (states, scan columns, derived copy), the pg-boss 12.35.0 schema with the
+    `document.scan` queue (installed here by the owner: no runtime role runs DDL or has `CREATE`),
+    and the privileges of the worker role (`legaltech_worker`).
+- The worker role is created by `infra/docker/postgres/init/01-roles.sql` on a new volume. On an
+  existing development volume, create it once as the owner (`CREATE ROLE legaltech_worker LOGIN
+PASSWORD 'legaltech_worker_dev'; GRANT CONNECT ON DATABASE legaltech TO legaltech_worker; GRANT
+USAGE ON SCHEMA public TO legaltech_worker;`) before `pnpm db:deploy`, or recreate the volume.
 - A migration that creates a table must `GRANT` the application role what it needs on it, and add
   the table to `apps/api/src/database.privileges.integration.test.ts` (`DATABASE_SPEC.md`).
 - Any change to `schema.prisma` must come with a migration and an update to `docs/DATABASE_SPEC.md`.

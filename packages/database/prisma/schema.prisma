@@ -250,9 +250,16 @@ enum DocumentFileType {
   @@map("document_file_type")
 }
 
-/// First Documents slice: every document is UPLOADED; later values arrive with the antivirus.
+/// Security treatment of a document (DATABASE_SPEC.md): antivirus and, for JPEG/PNG, a copy
+/// without identifying metadata. Only CLEAN can be downloaded. UPLOADED: stored before the
+/// antivirus existed (first Documents slice), queued by the worker at start.
 enum DocumentStatus {
   UPLOADED
+  PENDING_SCAN
+  SCANNING
+  CLEAN
+  INFECTED
+  SCAN_FAILED
 
   @@map("document_status")
 }
@@ -267,20 +274,31 @@ enum DocumentOcrStatus {
 /// A document of a case (PROJECT_SPEC.md s.16). The file lives in private object storage
 /// (StorageProvider); only its metadata is stored here.
 model Document {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  caseId           String            @map("case_id") @db.Uuid
-  fileName         String            @map("file_name")
-  fileType         DocumentFileType  @map("file_type")
-  storageKey       String            @unique @map("storage_key")
-  fileSize         Int               @map("file_size")
-  uploadedByUserId String            @map("uploaded_by_user_id") @db.Uuid
-  createdAt        DateTime          @map("created_at") @db.Timestamptz(6)
-  status           DocumentStatus    @default(UPLOADED)
-  ocrStatus        DocumentOcrStatus @default(NOT_STARTED) @map("ocr_status")
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  caseId              String            @map("case_id") @db.Uuid
+  fileName            String            @map("file_name")
+  fileType            DocumentFileType  @map("file_type")
+  storageKey          String            @unique @map("storage_key")
+  fileSize            Int               @map("file_size")
+  uploadedByUserId    String            @map("uploaded_by_user_id") @db.Uuid
+  createdAt           DateTime          @map("created_at") @db.Timestamptz(6)
+  status              DocumentStatus    @default(PENDING_SCAN)
+  ocrStatus           DocumentOcrStatus @default(NOT_STARTED) @map("ocr_status")
+  /// Treatments started (claims); the worker gives up after its limit.
+  scanAttempts        Int               @default(0) @map("scan_attempts")
+  /// Start of the treatment in progress: the claim token of the worker that holds it.
+  scanStartedAt       DateTime?         @map("scan_started_at") @db.Timestamptz(6)
+  /// End of the treatment (CLEAN, INFECTED or SCAN_FAILED).
+  scannedAt           DateTime?         @map("scanned_at") @db.Timestamptz(6)
+  /// Name of the signature the antivirus detected (INFECTED only).
+  scanSignature       String?           @map("scan_signature")
+  /// Derived copy without identifying metadata (JPEG/PNG only). The original is never changed.
+  sanitizedStorageKey String?           @unique @map("sanitized_storage_key")
 
   case       Case @relation(fields: [caseId], references: [id], onDelete: Restrict)
   uploadedBy User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
 
   @@index([caseId, createdAt])
+  @@index([status])
   @@map("documents")
 }
