@@ -104,12 +104,31 @@ jobs:
             echo "UPDATE on audit_logs must fail for the owner role (trigger)"; exit 1
           fi
 
-      # PrismaAuthRepository against the migrated database, as the application role (runtime
-      # privileges). The tests skip themselves without INTEGRATION_DATABASE_URL, so fail here
-      # rather than let an empty value pass silently.
-      - name: Integration tests (PostgreSQL)
+      # S3-compatible storage for the document storage integration tests (SeaweedFS, as in
+      # development). Started as a step because a service container cannot take a command.
+      - name: Start S3-compatible storage (SeaweedFS)
+        run: |
+          docker run -d --name seaweedfs -p 127.0.0.1:8333:8333 \
+            -e AWS_ACCESS_KEY_ID=legaltech_ci -e AWS_SECRET_ACCESS_KEY=legaltech_ci_secret \
+            chrislusf/seaweedfs:4.47 server -s3 -dir=/data -ip.bind=0.0.0.0
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/ || true)
+            [ "$code" = "403" ] && exit 0
+            sleep 1
+          done
+          docker logs seaweedfs; exit 1
+
+      # PrismaAuthRepository and the other repositories against the migrated database, as the
+      # application role (runtime privileges), and S3StorageProvider against SeaweedFS. The
+      # tests skip themselves without their variables, so fail here rather than let an empty
+      # value pass silently.
+      - name: Integration tests (PostgreSQL and S3)
         env:
           INTEGRATION_DATABASE_URL: ${{ env.APP_PSQL_URL }}
+          INTEGRATION_S3_ENDPOINT: http://127.0.0.1:8333
+          INTEGRATION_S3_ACCESS_KEY_ID: legaltech_ci
+          INTEGRATION_S3_SECRET_ACCESS_KEY: legaltech_ci_secret
         run: |
           test -n "$INTEGRATION_DATABASE_URL" || { echo "INTEGRATION_DATABASE_URL is empty"; exit 1; }
+          test -n "$INTEGRATION_S3_ENDPOINT" || { echo "INTEGRATION_S3_ENDPOINT is empty"; exit 1; }
           pnpm --filter @legaltech/api run test:integration
