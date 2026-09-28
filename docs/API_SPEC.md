@@ -1,9 +1,9 @@
 # API_SPEC.md
 
-**Versión:** 0.3 (cierre de la Fase 1)
+**Versión:** 0.4 (rebanada `Case`, Fase 2)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado para el cierre de la Fase 1 (2026-09-27). Describe la implementación actual.
-**Alcance:** endpoints de autenticación e infraestructura. Casos, documentos, pagos y demás se añaden con su fase.
+**Estado:** Aprobado (cierre de la Fase 1 y rebanada `Case`, 2026-09-27). Describe la implementación actual.
+**Alcance:** autenticación, infraestructura y la primera rebanada de casos (crear, listar y consultar los propios). Documentos, pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
 Este documento se mantiene manualmente junto a los esquemas de `packages/contracts` (la API todavía no genera OpenAPI). Toda modificación de un endpoint actualiza este archivo en el mismo cambio.
@@ -44,6 +44,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.email.verified` | Email verificado con un token válido (`POST /api/auth/email/verify`) | Usuario verificado | — |
 | `auth.logout_all` | Cierre de todas las sesiones del usuario (`POST /api/auth/logout-all`) | Usuario | — |
 | `auth.session.revoked` | Revocación de una sesión propia por ID (`DELETE /api/auth/sessions/:sessionId`) | Usuario | — (la sesión revocada es la entidad) |
+| `case.created` | Creación de un caso (`POST /api/cases`), en la misma transacción que el caso y su historial | Usuario propietario | — (el caso es la entidad y `case_id`; `new_value`: `type`, `status`) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
@@ -63,7 +64,7 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 
 `message` es para mostrar al usuario en español; `code` es estable, en inglés y está definido en `packages/contracts/src/error.ts`. `details` solo se usa en errores de validación (`field`, `issue`). Un encabezado `x-request-id` acompaña a cada respuesta.
 
-### Códigos de error usados por la autenticación
+### Códigos de error
 
 | HTTP | `code` | Uso |
 |---|---|---|
@@ -72,12 +73,12 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 | 401 | `INVALID_CREDENTIALS` | Email o contraseña incorrectos, o cuenta suspendida (mismo mensaje y forma) |
 | 403 | `CSRF_INVALID` | Token CSRF ausente o inválido, u origen no permitido |
 | 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002) |
-| 404 | `NOT_FOUND` | Ruta inexistente |
+| 404 | `NOT_FOUND` | Ruta inexistente, o recurso ajeno, inexistente o con identificador inválido (IDOR, ADR-003) |
 | 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); mismo mensaje en ambos casos |
 | 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
 | 500 | `INTERNAL_ERROR` | Error inesperado, sin detalles internos |
 
-`INVALID_OR_EXPIRED_TOKEN` existe en el contrato pero solo lo usarán los endpoints de verificación de email y recuperación de contraseña (no implementados).
+`INVALID_OR_EXPIRED_TOKEN` lo usan `POST /api/auth/email/verify` y `POST /api/auth/password/reset` para un token desconocido, usado o caducado (misma respuesta en los tres casos).
 `SERVICE_UNAVAILABLE` existe en el contrato; su mensaje es "Servicio no disponible temporalmente. Inténtalo más tarde." y lo usa el login cuando no puede evaluar el límite por cuenta (D3-2).
 
 ## Endpoints
@@ -225,6 +226,39 @@ Establece una nueva contraseña con el token del enlace. Petición previa a tene
 - **429:** `RATE_LIMITED` por IP: cada petición calcula el hash Argon2id de la contraseña nueva, exista o no el token.
 - **Auditoría:** `auth.password.reset_completed`. El aviso por email no lleva ningún token.
 
+### `POST /api/cases`
+
+Crea un caso del usuario autenticado (`case:create`, ADR-003; `PROJECT_SPEC.md` s.9 paso 2). Requiere sesión y CSRF. El caso nace en `DRAFT`; en la misma transacción se escriben su historial (`NULL → DRAFT`) y el evento de auditoría.
+
+- **Cuerpo:** `{ "type": CaseType }`. Cualquier otro campo (`status`, `userId`…) produce `VALIDATION_ERROR`: el estado y el propietario los fija el servidor.
+- **201:** `{ "case": Case }`.
+- **400:** `VALIDATION_ERROR`.
+- **401:** `UNAUTHENTICATED`.
+- **403:** `CSRF_INVALID`.
+- **404:** `NOT_FOUND` si la policy lo deniega: en esta rebanada solo el rol `USER` crea casos (PROFESSIONAL, ADMIN y SUPER_ADMIN quedan fuera hasta sus fases).
+- No exige email verificado (ADR-002 solo lo exige para acciones sensibles; crear un caso no lo es en esta rebanada).
+- **Auditoría:** `case.created`.
+
+### `GET /api/cases`
+
+Lista los casos del usuario autenticado, solo los propios (`case:list`), del más reciente al más antiguo.
+
+- **200:** `{ "cases": [Case] }`.
+- **401:** `UNAUTHENTICATED`.
+- **404:** `NOT_FOUND` si la policy lo deniega (roles distintos de `USER` en esta rebanada).
+- Petición segura (GET): sin CSRF ni evento de auditoría.
+
+### `GET /api/cases/:caseId`
+
+Devuelve un caso propio con su historial de estados (`case:read`).
+
+- **200:** `{ "case": Case, "statusHistory": [CaseStatusChange] }`, historial en orden cronológico.
+- **401:** `UNAUTHENTICATED`.
+- **404:** `NOT_FOUND`, con la misma respuesta cuando el caso pertenece a otro usuario, no existe o el identificador no es un UUID (IDOR, ADR-003), y cuando la policy lo deniega.
+- Petición segura (GET): sin CSRF ni evento de auditoría.
+
+**Fuera de esta rebanada:** `PATCH /api/cases/:caseId` (`PROJECT_SPEC.md` s.28), la cancelación y cualquier otra transición de estado, el cuestionario dinámico y los endpoints de documentos, análisis, precio, pago y actuaciones.
+
 ## Esquemas
 
 ### `User`
@@ -254,6 +288,30 @@ Establece una nueva contraseña con el token del enlace. Petición previa a tene
 ```
 
 Nunca se devuelven `passwordHash`, hashes de tokens ni tokens en claro.
+
+### `Case`
+
+```json
+{
+  "id": "uuid",
+  "type": "TRAFFIC_CITATION | INFRACTION | PHOTO_ENFORCEMENT | TRANSPORT | NOTIFICATION | ADMINISTRATIVE_PROCEEDING | OTHER",
+  "status": "DRAFT | … (los 15 estados de CaseStatus, DATABASE_SPEC.md)",
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601"
+}
+```
+
+Los tipos son los 7 de `PROJECT_SPEC.md` s.9 paso 2 (comparendo, infracción, fotodetección, transporte, notificación, actuación administrativa, otro). No se devuelve el propietario: siempre es el usuario autenticado.
+
+### `CaseStatusChange`
+
+```json
+{
+  "fromStatus": "CaseStatus | null",
+  "toStatus": "CaseStatus",
+  "changedAt": "ISO-8601"
+}
+```
 
 ## Rate limits (Sprint 1B, valores iniciales)
 
@@ -305,4 +363,4 @@ Indica que la API puede atender tráfico (comprueba la conexión a la base de da
 
 ## Fuera de esta versión
 
-Gestión de usuarios por administradores, MFA, cambio de contraseña con sesión activa y el resto de módulos de la spec (s.28).
+Gestión de usuarios por administradores, MFA, cambio de contraseña con sesión activa, transiciones de estado de los casos y el resto de módulos de la spec (s.28).

@@ -12,7 +12,11 @@ LegalTech platform for traffic and transport infractions in Colombia.
   `/registro`, `/verificar-correo`, `/recuperar-contrasena`, `/restablecer-contrasena` and the
   protected empty `/panel`, the auth policy and the development seed. Emails go through an outbox;
   in development `pnpm email:dispatch` writes them to `.dev-mail/` (real delivery arrives with the
-  Phase 3 worker). No MFA or business features (Cases, Documents, Pricing, Payments, Legal AI) yet.
+  Phase 3 worker).
+- **Phase 2 (Cases), first slice:** a user creates cases (the 7 types of PROJECT_SPEC s.9, always in
+  `DRAFT`), lists and reads their own (`/api/cases`; web `/casos`, `/casos/nuevo`, `/casos/[id]`,
+  and active/closed cases in `/panel`). No status transitions, questionnaire, documents, pricing,
+  payments or Legal AI yet; no MFA.
 
 ## Prerequisites
 
@@ -56,8 +60,8 @@ Run `pnpm format` once after the first install and commit the result before open
 
 ```
 apps/
-  api/        Fastify API (modular monolith). Modules: health, auth, notifications (email outbox)
-  web/        Next.js frontend: auth pages (Spanish routes), protected /panel; /api/* proxied to the API
+  api/        Fastify API (modular monolith). Modules: health, auth, notifications (email outbox), cases
+  web/        Next.js frontend: auth pages and /casos (Spanish routes), protected /panel; /api/* proxied
 packages/
   contracts/       Shared Zod schemas and types
   database/        Prisma schema, migrations, client (identity slice only)

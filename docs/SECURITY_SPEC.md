@@ -1,8 +1,8 @@
 # SECURITY_SPEC.md
 
-**Versión:** 0.2 (línea base, cierre de la Fase 1)
+**Versión:** 0.3 (línea base; rebanada `Case` de la Fase 2)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado para el cierre de la Fase 1 (2026-09-27)
+**Estado:** Aprobado (cierre de la Fase 1 y rebanada `Case`, 2026-09-27)
 **Referencias:** `PROJECT_SPEC.md` s.26, s.27; ADR-002; ADR-003. Marcos de referencia: OWASP Top 10 y OWASP ASVS.
 
 Este documento fija la línea base de seguridad. Cada fase la amplía en el mismo cambio que introduce nuevas superficies (documentos, pagos, IA).
@@ -24,6 +24,8 @@ La API exige `NODE_ENV` explícito (`development`, `test` o `production`); sin �
 ## 3. Autorización
 
 Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request, protección explícita contra IDOR (404 para recursos ajenos), policies puras y tests de acceso cruzado.
+
+- Casos (Fase 2, primera rebanada): `case:create`, `case:list` y `case:read` solo para el rol `USER` y sobre sus propios casos; los repositorios filtran siempre por el usuario y un caso ajeno, inexistente o con identificador inválido responde 404. PROFESSIONAL, ADMIN y SUPER_ADMIN no acceden a casos hasta sus fases (asignaciones, acceso administrativo justificado y auditado, §11).
 
 ## 4. Transporte y navegador
 
@@ -60,6 +62,7 @@ Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request
 
 - `AuditLog` append-only (`DATABASE_SPEC.md`).
 - Eventos mínimos del Sprint 1: registro, login exitoso y fallido, logout, revocaciones (de una sesión propia por ID y de todas las sesiones), verificación de email, solicitud y uso de recuperación de contraseña. Los nombres exactos están en `API_SPEC.md`.
+- Fase 2 (rebanada `Case`): `case.created`, con `case_id`, en la misma transacción que el caso y su historial de estados. Cada cambio de estado futuro se auditará igual (`PROJECT_SPEC.md` s.8 y s.25).
 - Los cambios de rol se auditarán cuando exista el flujo administrativo, que queda fuera del Sprint 1 (ADR-003: la matriz del Sprint 1 solo cubre acciones de autenticación y del propio usuario). Las rotaciones periódicas de sesión no se auditan (decisión P9 del Sprint 1B).
 - Sin contraseñas, tokens ni hashes en los valores registrados.
 - Cada evento de un cambio de estado se escribe en la misma transacción que el cambio: login fallido y bloqueo (D3), verificación de email, restablecimiento de contraseña, logout, revocación por ID y cierre de todas las sesiones (Sprint 1B, H1). Se guardan ambos o ninguno, y una revocación repetida o concurrente no genera un segundo evento.

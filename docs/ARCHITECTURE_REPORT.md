@@ -150,6 +150,10 @@ La Fase 1 se da por cerrada solo cuando se cumple todo lo siguiente:
 10. **Sin hallazgos de seguridad críticos o altos abiertos;** los aceptados quedan listados con su barrera en `SECURITY_SPEC.md` §12 (IP global hasta P3, MFA, entrega real de email).
 11. **Aprobación explícita del responsable del proyecto,** registrada con fecha y commit de cierre.
 
+*Criterio cumplido el 2026-09-27: commit de cierre `ef7920c` en `main`, CI verde (run 36360859619), aprobado por el responsable del proyecto.*
+
+*(2026-09-27: la Fase 2 comenzó con la primera rebanada de `Case` aprobada —crear, listar y consultar los casos propios—; el resto de Cases sigue fuera de alcance hasta su aprobación.)*
+
 **Fuera de alcance por ahora:** Cases, Documents, OCR, Pricing, Payments, Legal AI, RAG, workflow profesional y workflow administrativo completo.
 
 ---

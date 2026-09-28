@@ -1,10 +1,10 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.2 (rebanada de identidad y outbox de email, cierre de la Fase 1)
+**Versión:** 0.3 (rebanada `Case`, Fase 2)
 **Fecha:** 2026-09-27
-**Estado:** Aprobado para el cierre de la Fase 1 (2026-09-27)
-**Alcance:** únicamente `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B).
-**Fuera de alcance:** `Case`, `Document`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
+**Estado:** Aprobado (cierre de la Fase 1, 2026-09-27; rebanada `Case` aprobada el 2026-09-27)
+**Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2, primera rebanada).
+**Fuera de alcance:** `Infraction`, `Authority`, `Document`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
 
 ## Convenciones
 
@@ -22,6 +22,8 @@
 | `UserStatus` | `ACTIVE`, `SUSPENDED` |
 | `SessionRevokedReason` | `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_RESET`, `PASSWORD_CHANGE`, `ROTATED`, `ROLE_CHANGE`, `ADMIN_REVOKE`, `EXPIRED` |
 | `EmailOutboxKind` | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `PASSWORD_RESET_COMPLETED` |
+| `CaseType` | `TRAFFIC_CITATION` (comparendo), `INFRACTION` (infracción), `PHOTO_ENFORCEMENT` (fotodetección), `TRANSPORT` (transporte), `NOTIFICATION` (notificación), `ADMINISTRATIVE_PROCEEDING` (actuación administrativa), `OTHER` (otro): los 7 tipos de `PROJECT_SPEC.md` s.9 paso 2, sin añadir ninguno |
+| `CaseStatus` | Los 15 estados iniciales de `PROJECT_SPEC.md` s.8: `DRAFT`, `DOCUMENTS_PENDING`, `PRELIMINARY_ANALYSIS`, `PAYMENT_PENDING`, `PAID`, `LEGAL_REVIEW`, `DOCUMENT_PREPARATION`, `READY_TO_FILE`, `FILED`, `WAITING_RESPONSE`, `RESPONSE_RECEIVED`, `FOLLOW_UP`, `RESOLVED`, `CLOSED`, `CANCELLED` |
 
 ## Tablas
 
@@ -98,7 +100,7 @@
 
 ### `audit_logs`
 
-Basada en `PROJECT_SPEC.md` s.25. `case_id` se añadirá en la rebanada de `Case`.
+Basada en `PROJECT_SPEC.md` s.25. `case_id` se añadió con la rebanada de `Case`.
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
@@ -109,6 +111,7 @@ Basada en `PROJECT_SPEC.md` s.25. `case_id` se añadirá en la rebanada de `Case
 | `action` | text | NOT NULL (p. ej. `auth.login.failed`) |
 | `entity_type` | text | NULL |
 | `entity_id` | text | NULL |
+| `case_id` | uuid | NULL, FK `cases(id)` ON DELETE RESTRICT |
 | `previous_value` | jsonb | NULL |
 | `new_value` | jsonb | NULL |
 | `metadata` | jsonb | NULL |
@@ -116,7 +119,7 @@ Basada en `PROJECT_SPEC.md` s.25. `case_id` se añadirá en la rebanada de `Case
 | `ip` | inet | NULL |
 | `user_agent` | text | NULL |
 
-- Índices: `(actor_user_id, occurred_at)`, `(action, occurred_at)`, `(entity_type, entity_id)`, y uno parcial para conteo de intentos fallidos por cuenta.
+- Índices: `(actor_user_id, occurred_at)`, `(action, occurred_at)`, `(entity_type, entity_id)`, `(case_id, occurred_at)` y uno parcial para conteo de intentos fallidos por cuenta.
 - **Append-only:** el rol de base de datos de la aplicación no tiene `UPDATE` ni `DELETE` sobre esta tabla, y un trigger rechaza ambos como segunda barrera.
 - **Redacción obligatoria:** `previous_value`, `new_value` y `metadata` nunca contienen contraseñas, tokens ni hashes.
 - `actor_user_id` nulo se usa para eventos sin usuario identificado (p. ej. login fallido de un correo inexistente; en ese caso el correo se guarda en `metadata` únicamente como hash).
@@ -138,6 +141,41 @@ Patrón outbox (ARCHITECTURE_REPORT §2; Sprint 1B, decisión C2): cada email pe
 - **Nunca guarda un token ni otro secreto** (ADR-002: los tokens solo se guardan como hash). El token de un email se genera en memoria al despacharlo; solo su hash se guarda, en su tabla.
 - El despacho toma cada pendiente con `FOR UPDATE SKIP LOCKED`, compone y envía el mensaje, y la marca como enviada en la misma transacción; si algo falla, sigue pendiente. En el Sprint 1B lo invocan los tests y un comando de desarrollo (`pnpm email:dispatch`); en la Fase 3 lo invocará el worker (ADR-001).
 
+### `cases`
+
+Objeto central y genérico de la plataforma (`PROJECT_SPEC.md` s.7 y s.35). Primera rebanada de la Fase 2: solo el propietario, el tipo y el estado. `Infraction`, `Authority`, documentos, pagos y asignaciones llegan con sus fases.
+
+| Columna | Tipo | Restricciones |
+|---|---|---|
+| `id` | uuid | PK |
+| `user_id` | uuid | NOT NULL, FK `users(id)` ON DELETE RESTRICT (propietario) |
+| `type` | `CaseType` | NOT NULL |
+| `status` | `CaseStatus` | NOT NULL, DEFAULT `DRAFT` |
+| `created_at` | timestamptz | NOT NULL, DEFAULT now() |
+| `updated_at` | timestamptz | NOT NULL |
+
+- Índice: `(user_id, created_at)`, para el listado de los casos de un usuario.
+- Minimización de datos: sin texto libre ni datos personales; al crear el caso solo se elige el tipo (`PROJECT_SPEC.md` s.9 paso 2).
+- **Estados en esta rebanada:** el enum contiene los 15 estados de s.8, pero solo `DRAFT` es alcanzable: un caso nace en `DRAFT` y no hay transiciones (ni cancelación). `PROJECT_SPEC.md` no define la matriz de transiciones (ARCHITECTURE_REPORT, hallazgo 11); cada transición se añade con su fase y su decisión. La única fijada por la spec, `PAID`, solo la provocará el webhook de pagos (s.9 paso 9, s.23).
+- Los casos no se eliminan.
+
+### `case_status_history`
+
+Historial de estados de cada caso (`PROJECT_SPEC.md` s.8: "todos los cambios de estado deberán registrarse en un historial").
+
+| Columna | Tipo | Restricciones |
+|---|---|---|
+| `id` | uuid | PK |
+| `case_id` | uuid | NOT NULL, FK `cases(id)` ON DELETE RESTRICT |
+| `from_status` | `CaseStatus` | NULL (solo en la entrada de creación) |
+| `to_status` | `CaseStatus` | NOT NULL |
+| `changed_by_user_id` | uuid | NOT NULL, FK `users(id)` ON DELETE RESTRICT |
+| `changed_at` | timestamptz | NOT NULL, DEFAULT now() |
+
+- Índice: `(case_id, changed_at)`.
+- Append-only para la aplicación (solo `SELECT` e `INSERT`).
+- La creación de un caso escribe, en una sola transacción, el caso, su entrada `NULL → DRAFT` y el evento `case.created` (con `case_id`): se guarda todo o nada.
+
 ## Relaciones
 
 ```
@@ -146,6 +184,9 @@ users 1 ── * email_verification_tokens
 users 1 ── * password_reset_tokens
 users 1 ── * audit_logs (actor)
 users 1 ── * email_outbox
+users 1 ── * cases (propietario)
+cases 1 ── * case_status_history
+cases 1 ── * audit_logs (case_id)
 ```
 
 ## Migraciones
@@ -153,6 +194,7 @@ users 1 ── * email_outbox
 - Migración inicial (`init_identity`) con el esquema de este documento, más una migración SQL manual con el CHECK de email, el trigger append-only de `audit_logs` y los permisos del rol de aplicación.
 - `email_outbox` (Sprint 1B): tabla `email_outbox` y enum `email_outbox_kind`.
 - `app_role_least_privilege` (Sprint 1B): el rol de aplicación pasa a tener solo los permisos de la tabla siguiente y deja de recibir permisos por defecto.
+- `cases` (Fase 2): enums `case_type` y `case_status`, tablas `cases` y `case_status_history`, columna `audit_logs.case_id`, y sus permisos.
 - Cada migración que cree una tabla concede en ella, explícitamente, los permisos que la aplicación necesite (y los añade al test `database.privileges.integration.test.ts`); sin ese `GRANT`, el rol de aplicación no puede usarla.
 - Toda modificación al esquema actualiza este documento en el mismo cambio.
 
@@ -164,6 +206,7 @@ El rol de propietario (migraciones) crea las tablas; el rol de aplicación (`DAT
 |---|---|
 | `users`, `sessions`, `email_verification_tokens`, `password_reset_tokens`, `email_outbox` | `SELECT`, `INSERT`, `UPDATE` |
 | `audit_logs` | `SELECT`, `INSERT` (append-only) |
+| `cases`, `case_status_history` | `SELECT`, `INSERT` (sin transiciones en esta rebanada; `UPDATE` en `cases` se concederá con la primera transición) |
 | `_prisma_migrations` | ninguno |
 
 - Sin `DELETE` ni `TRUNCATE` en ninguna tabla, sin `CREATE` en el esquema, sin tablas temporales (el arranque de desarrollo retira `TEMPORARY` a `PUBLIC`) y sin permisos por defecto sobre tablas o secuencias futuras. `UPDATE` en `email_outbox` cubre también el `SELECT ... FOR UPDATE SKIP LOCKED` del despacho.
