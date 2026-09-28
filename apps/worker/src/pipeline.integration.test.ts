@@ -6,7 +6,7 @@ import { fromPrisma, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AntivirusError, type AntivirusProvider } from "./antivirus/antivirus.js";
 import { ClamAvProvider } from "./antivirus/clamav.js";
-import { requeueUntreatedDocuments, startPgBossForWorker, workDocumentScans } from "./queue.js";
+import { startPgBossForWorker, sweepUntreatedDocuments, workDocumentScans } from "./queue.js";
 import { PrismaScanRepository } from "./scan/scan.repository.js";
 import {
   clients,
@@ -23,6 +23,7 @@ import {
  */
 const FAIL_ONCE = Buffer.from("LEGALTECH-FAIL-ONCE");
 const FAIL_ALWAYS = Buffer.from("LEGALTECH-FAIL-ALWAYS");
+const SWEEP = { leaseSeconds: 600, maxAttempts: 3 };
 
 describe.skipIf(!hasPipeline)(
   "document security treatment (PostgreSQL + pg-boss + S3 + ClamAV)",
@@ -212,9 +213,28 @@ describe.skipIf(!hasPipeline)(
       });
       await storage.putObject({ key: document.storageKey, body: pdf, contentType: "x" });
 
-      expect(await requeueUntreatedDocuments(worker, workerBoss, 600)).toBeGreaterThanOrEqual(1);
+      const { requeued } = await sweepUntreatedDocuments(worker, workerBoss, SWEEP);
+      expect(requeued).toContain(document.id);
 
       expect((await finalState(document.id)).status).toBe("CLEAN");
+    }, 90_000);
+
+    it("recovers an abandoned claim (its worker died) with the sweep, and finishes it", async () => {
+      const pdf = Buffer.from("%PDF-1.7\nreclamo abandonado\n");
+      const document = await seedDocument(app, { fileType: "PDF", fileSize: pdf.length });
+      await storage.putObject({ key: document.storageKey, body: pdf, contentType: "x" });
+      // A worker claimed it 700 s ago and died; its job will not come back.
+      await worker.$executeRaw`
+        UPDATE documents SET status = 'SCANNING', scan_attempts = 1,
+               scan_started_at = clock_timestamp() - interval '700 seconds'
+        WHERE id = ${document.id}::uuid`;
+
+      const { requeued } = await sweepUntreatedDocuments(worker, workerBoss, SWEEP);
+      expect(requeued).toContain(document.id);
+
+      const done = await finalState(document.id);
+      expect(done.status).toBe("CLEAN");
+      expect(done.scanAttempts).toBe(2);
     }, 90_000);
   },
 );

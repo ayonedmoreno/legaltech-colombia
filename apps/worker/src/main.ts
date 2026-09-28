@@ -2,7 +2,12 @@ import { createPrismaClient } from "@legaltech/database";
 import { loadStorageEnv, S3StorageProvider } from "@legaltech/storage";
 import { ClamAvProvider } from "./antivirus/clamav.js";
 import { loadWorkerEnv } from "./config.js";
-import { requeueUntreatedDocuments, startPgBossForWorker, workDocumentScans } from "./queue.js";
+import {
+  startPeriodicSweep,
+  startPgBossForWorker,
+  sweepUntreatedDocuments,
+  workDocumentScans,
+} from "./queue.js";
 import { PrismaScanRepository } from "./scan/scan.repository.js";
 
 /**
@@ -20,8 +25,20 @@ boss.on("error", (error: Error) =>
   log({ level: "error", source: "pg-boss", message: error.message }),
 );
 
-const requeued = await requeueUntreatedDocuments(prisma, boss, env.SCAN_LEASE_SECONDS);
-log({ level: "info", message: "worker started", requeued });
+// Recovery (DATABASE_SPEC.md): at start, then every SCAN_SWEEP_INTERVAL_SECONDS.
+const sweep = () =>
+  sweepUntreatedDocuments(prisma, boss, {
+    leaseSeconds: env.SCAN_LEASE_SECONDS,
+    maxAttempts: env.SCAN_MAX_ATTEMPTS,
+  });
+const initial = await sweep();
+log({
+  level: "info",
+  message: "worker started",
+  requeued: initial.requeued.length,
+  failed: initial.failed.length,
+});
+const stopSweep = startPeriodicSweep(sweep, env.SCAN_SWEEP_INTERVAL_SECONDS * 1000, log);
 
 await workDocumentScans(
   boss,
@@ -41,6 +58,7 @@ await workDocumentScans(
 
 async function shutdown(signal: string): Promise<void> {
   log({ level: "info", message: "shutting down", signal });
+  stopSweep();
   await boss.stop({ graceful: true });
   await prisma.$disconnect();
   process.exit(0);

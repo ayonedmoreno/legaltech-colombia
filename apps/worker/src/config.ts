@@ -16,6 +16,8 @@ const workerEnvSchema = z.object({
   // A SCANNING document older than this is taken to be abandoned (its worker died) and may be
   // claimed again. Below the queue's 15-minute job expiry, so a retried job can reclaim it.
   SCAN_LEASE_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+  // How often the worker sweeps for abandoned claims and documents without a job.
+  SCAN_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
