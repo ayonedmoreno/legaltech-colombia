@@ -205,10 +205,11 @@ Hasta que se definan, el sistema no codifica ninguna de estas decisiones y las e
 |---|---|---|
 | P1 | Confirmar el reorden del roadmap (sección 6) | Fase 4 |
 | P2 | Alcance del MVP: tipos de caso, autoridades y ciudades piloto | Fases 2 y 7 |
-| P3 | Nube y región | Fase 3 (y despliegue a staging) |
+| P3 | Nube y región: proveedor, región y ubicación de almacenamiento, PostgreSQL, worker y ClamAV; residencia y, si hay transferencia internacional, su validación jurídica (tabla anterior) | Despliegue de la Fase 3 con documentos reales (staging y producción), bucket de producción y, en la práctica, la elección de OCR (P4). No bloquea el desarrollo local detrás de `StorageProvider` |
 | P4 | Proveedor de OCR, tras prueba con documentos reales anonimizados | Fase 3 |
 | P5 | Pasarela de pagos para Colombia | Fase 6 |
 | P6 | Proveedores de LLM y embeddings; responsable de curar el corpus | Fase 7 |
+| P7 | Limpieza de metadata de PDF (hoy el PDF se entrega intacto solo a su propietario); está por determinar si requiere validación jurídica | Descarga de documentos PDF por otros roles y producción |
 | V1 | Posición y significado de `FOLLOW_UP` (`DATABASE_SPEC.md`, estados del caso) | Fase de profesionales |
 | V2 | Diferencia entre `RESOLVED` y `CLOSED`, y salidas de `RESPONSE_RECEIVED` | Fase de profesionales |
 | V4 | Posición de `LEGAL_REVIEW` respecto al pricing y la asignación profesional | Fases de pricing y de profesionales |

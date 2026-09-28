@@ -1,6 +1,6 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.5 (antivirus y metadata de documentos, Fase 3)
+**Versión:** 0.6 (recuperación del tratamiento y mínimo privilegio del worker, Fase 3)
 **Fecha:** 2026-09-28
 **Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28)
 **Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
@@ -254,7 +254,7 @@ Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse
 | `scan_started_at` | timestamptz | NULL (inicio del tratamiento en curso; identifica el reclamo del worker) |
 | `scanned_at` | timestamptz | NULL (fin del tratamiento con `CLEAN`, `INFECTED` o `SCAN_FAILED`) |
 | `scan_signature` | text | NULL (solo con `INFECTED`: nombre de la firma que detectó el antivirus) |
-| `sanitized_storage_key` | text | NULL, UNIQUE (copia derivada sin metadata identificable; solo JPEG y PNG `CLEAN`) |
+| `sanitized_storage_key` | text | NULL, UNIQUE (copia derivada sin la metadata que retira la política; solo JPEG y PNG `CLEAN`) |
 
 - Índices: `(case_id, created_at)` y `(status)`.
 - El archivo se escribe en el almacenamiento antes que la fila; la fila, `document.uploaded` (con `case_id`) y el job `document.scan` se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla, se borra el objeto recién escrito; si también falla ese borrado, queda un objeto huérfano sin fila, que nadie puede descargar (se registra en el log).
@@ -263,11 +263,11 @@ Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse
 
 #### Tratamiento de seguridad del documento (Fase 3, segunda rebanada)
 
-Lo hace el worker (`apps/worker`), fuera de la petición HTTP: análisis antivirus con ClamAV dentro de nuestra infraestructura y, para JPEG y PNG, una copia derivada sin metadata identificable. **Solo un documento `CLEAN` se puede descargar**, y se descarga la versión que pasó el tratamiento: la copia derivada para JPEG y PNG, el original intacto para PDF.
+Lo hace el worker (`apps/worker`), fuera de la petición HTTP: análisis antivirus con ClamAV dentro de nuestra infraestructura y, para JPEG y PNG, una copia derivada sin la metadata que retira la política (ver **Metadata** más abajo). **Solo un documento `CLEAN` se puede descargar**, y se descarga la versión que pasó el tratamiento: la copia derivada para JPEG y PNG, el original intacto para PDF.
 
 | Estado | Significado |
 |---|---|
-| `UPLOADED` | Guardado antes de que existiera el antivirus (primera rebanada), sin job. El worker, al arrancar, lo pasa a `PENDING_SCAN` y lo pone en cola. |
+| `UPLOADED` | Estado heredado: documento guardado antes de que existiera el antivirus (primera rebanada), sin job. Las subidas nuevas nunca pasan por él: entran en `PENDING_SCAN` con su job en la misma transacción. El barrido del worker lo pasa a `PENDING_SCAN` y lo pone en cola. |
 | `PENDING_SCAN` | Pendiente de tratamiento, con un job `document.scan` en cola. Estado inicial de todo documento nuevo. |
 | `SCANNING` | Un worker lo reclamó y lo está tratando. |
 | `CLEAN` | Sin amenazas y, si es JPEG o PNG, con su copia derivada guardada. Estado final; el único descargable. |
@@ -279,18 +279,20 @@ Transiciones, todas con una sentencia condicional dentro de una transacción:
 | Desde | Hasta | Cuándo |
 |---|---|---|
 | (nuevo) | `PENDING_SCAN` | Subida: fila, `document.uploaded` y job en la misma transacción. |
-| `UPLOADED` | `PENDING_SCAN` | Arranque del worker (documentos anteriores al antivirus): estado y job en la misma transacción. |
+| `UPLOADED` | `PENDING_SCAN` | Barrido del worker (documentos anteriores al antivirus): estado y job en la misma transacción. |
 | `PENDING_SCAN` | `SCANNING` | Reclamo: `UPDATE … WHERE status = 'PENDING_SCAN'`; suma 1 a `scan_attempts` y fija `scan_started_at`. Solo un worker lo consigue. |
 | `SCANNING` | `SCANNING` | Reclamo de un tratamiento abandonado (`scan_started_at` más antiguo que el plazo de reclamo: el worker que lo tenía murió). |
 | `SCANNING` | `CLEAN`, `INFECTED` | Resultado. Solo lo escribe el worker que tiene el reclamo (mismo `scan_started_at`). |
 | `SCANNING` | `PENDING_SCAN` | Error transitorio con intentos pendientes: el job se reintenta. |
 | `SCANNING` | `SCAN_FAILED` | Error sin intentos pendientes (5 intentos). |
-| `SCANNING` | `PENDING_SCAN` | Arranque del worker: un `SCANNING` cuyo reclamo superó el plazo (el worker que lo tenía murió y pg-boss ya no lo reintenta) vuelve a `PENDING_SCAN` y se pone en cola, en la misma transacción. |
+| `SCANNING` | `PENDING_SCAN` | Barrido del worker: reclamo abandonado (más antiguo que el plazo de reclamo, 600 s) con intentos pendientes (`scan_attempts` < 5); estado y nuevo job en la misma transacción. |
+| `SCANNING` | `SCAN_FAILED` | Barrido del worker: reclamo abandonado sin intentos pendientes (`scan_attempts` ≥ 5), con `document.scan_failed` en la misma transacción. Un archivo que tumba al worker no se reintenta indefinidamente. |
 
-- **Recuperación, no transición del caso:** las vueltas a `PENDING_SCAN` (reintento y arranque del worker) son recuperación de trabajos del tratamiento del documento; no cambian `scan_attempts` (lo suma el reclamo) ni el estado del `Case`.
+- **Barrido de recuperación:** el worker lo ejecuta al arrancar y después cada `SCAN_SWEEP_INTERVAL_SECONDS` (60 s por defecto), sin depender de reinicios, de los reintentos de pg-boss (que se agotan) ni de su planificador (`schedule`, desactivado). Bloquea las filas con `FOR UPDATE SKIP LOCKED` y vuelve a comprobar la condición sobre la fila bloqueada, así que varios workers a la vez actúan una sola vez sobre cada documento, sin esperarse. Al quitar `scan_started_at`, el worker que tenía el reclamo ya no puede escribir un resultado.
+- **Recuperación, no transición del caso:** las vueltas a `PENDING_SCAN` (reintento y barrido) son recuperación de trabajos del tratamiento del documento; no cambian `scan_attempts` (lo suma el reclamo) ni el estado del `Case`.
 - **Idempotencia:** un job cuyo documento no está en `PENDING_SCAN` (ni es un `SCANNING` abandonado) no hace nada. Un job repetido o simultáneo nunca trata dos veces el mismo documento ni escribe dos resultados.
 - **Nunca `CLEAN` por defecto:** solo la respuesta exacta de "sin amenazas" de ClamAV produce `CLEAN`; cualquier otra respuesta, error o tiempo agotado es un error.
-- **Metadata** (decisión del 2026-09-28): JPEG: se recorre toda la estructura y se quitan los segmentos EXIF (con GPS) y XMP (`APP1`), IPTC (`APP13`) y comentarios (`COM`) donde aparezcan, también entre los barridos de un JPEG progresivo; los datos de imagen se copian byte a byte, sin recodificar, y se descarta lo que haya después de `EOI`. PNG: se quitan los bloques `eXIf`, `tEXt`, `zTXt` e `iTXt` (incluye XMP), se conservan los demás, que forman la imagen, y se descarta lo que haya después de `IEND`. El original nunca se sobrescribe: la copia derivada es otro objeto (`sanitized_storage_key`). **PDF: no se modifica**; su limpieza de metadata es una decisión pendiente. Si la limpieza falla, cuenta como error del tratamiento y el documento no se habilita.
+- **Metadata** (decisión del 2026-09-28): JPEG: se recorre toda la estructura y se quitan los segmentos EXIF (con GPS) y XMP (`APP1`), IPTC (`APP13`) y comentarios (`COM`) donde aparezcan, también entre los barridos de un JPEG progresivo; los datos de imagen se copian byte a byte, sin recodificar, y se descarta lo que haya después de `EOI`. PNG: se quitan los bloques `eXIf`, `tEXt`, `zTXt` e `iTXt` (incluye XMP), se conservan los demás, que forman la imagen, y se descarta lo que haya después de `IEND`. **La política no retira toda la metadata posible:** se conservan, entre otros, en JPEG los segmentos `APP0` (JFIF, que puede llevar una miniatura), `APP2` (perfil de color ICC e índice MPF), `APP12` y los demás `APPn` de fabricantes; en PNG, `tIME` (fecha de modificación), `iCCP` (nombre del perfil de color) y los bloques auxiliares privados. Retirarlos sería ampliar la política, algo no decidido. El original nunca se sobrescribe: la copia derivada es otro objeto (`sanitized_storage_key`). **PDF: no se modifica**; su limpieza de metadata es una decisión pendiente. Si la limpieza falla, cuenta como error del tratamiento y el documento no se habilita.
 - **Auditoría** (sin actor: la hace el sistema), en la misma transacción que el cambio, con `case_id` y sin el nombre del archivo: `document.scan_clean`, `document.scan_infected` (con la firma en `new_value`) y `document.scan_failed`. El reclamo y los reintentos no se auditan.
 
 #### Cola de trabajos (pg-boss)
@@ -298,8 +300,9 @@ Transiciones, todas con una sentencia condicional dentro de una transacción:
 pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgboss`, con la cola `document.scan`.
 
 - **El esquema y la cola los crea el rol propietario** con una migración versionada (el SQL que exporta `getConstructionPlans` de esa versión, y `create_queue` sin particionar, que no ejecuta DDL). Actualizar pg-boss exige una migración con su cambio de esquema.
-- En tiempo de ejecución pg-boss arranca con `migrate: false` (solo comprueba la versión), `reindex: false`, `persistQueueStats: false` y `schedule: false`: **ningún proceso de la aplicación ejecuta DDL**.
-- La API encola en la misma transacción que la fila del documento; el worker consume la cola y hace el mantenimiento de trabajos de pg-boss (caducidad y retención de trabajos, que es DML).
+- En tiempo de ejecución **ningún proceso de la aplicación ejecuta DDL**. Las dos instancias arrancan con `migrate: false` (solo comprueba la versión), `schedule: false` (sin planificador), `persistWarnings: false` y `reindex: false`:
+  - **API** (`startPgBossForApi`): además `supervise: false`. Solo encola, en la misma transacción que la fila del documento.
+  - **Worker** (`startPgBossForWorker`): `supervise: true` y `persistQueueStats: false`. Consume la cola y hace la supervisión (caducidad de trabajos, conteos de la cola), el mantenimiento (retención de trabajos y limpieza de dependencias) y la resolución de flujos, todo DML. No envía trabajos con dependencias ni usa publicación/suscripción.
 - Reintentos de la cola: 4 (5 intentos en total), con espera creciente; el worker además cuenta los intentos en `scan_attempts` y marca `SCAN_FAILED` al agotarlos.
 
 ## Relaciones
@@ -325,6 +328,7 @@ users 1 ── * documents (uploaded_by)
 - `cases` (Fase 2): enums `case_type` y `case_status`, tablas `cases` y `case_status_history`, columna `audit_logs.case_id`, y sus permisos.
 - `documents` (Fase 3): enums `document_file_type`, `document_status` y `document_ocr_status`, tabla `documents` y sus permisos.
 - `document_scan_states` y `document_scan` (Fase 3, segunda rebanada): nuevos estados de `document_status`; columnas `scan_*` y `sanitized_storage_key`; esquema `pgboss` con la cola `document.scan`; permisos del rol de worker.
+- `worker_pgboss_least_privilege` (Fase 3, cierre de la segunda rebanada): retira al rol del worker los permisos de `pgboss` que no usa con su configuración (`DELETE` en `job`; `INSERT` y `UPDATE` en `job_dependency`; `SELECT` en `schedule`, `subscription`, `bam` y `warning`; `UPDATE` de `cron_on`, `bam_on` y `reindex_on`).
 - Cada migración que cree una tabla concede en ella, explícitamente, los permisos que la aplicación necesite (y los añade al test `database.privileges.integration.test.ts`); sin ese `GRANT`, el rol de aplicación no puede usarla.
 - Toda modificación al esquema actualiza este documento en el mismo cambio.
 
@@ -351,13 +355,14 @@ El rol del worker (`legaltech_worker`) tiene exactamente lo que el tratamiento d
 | `documents` | `SELECT`, y `UPDATE` solo de `status`, `scan_attempts`, `scan_started_at`, `scanned_at`, `scan_signature` y `sanitized_storage_key` (permiso por columna: el nombre, la clave del original, el caso y el tamaño no se pueden cambiar) |
 | `audit_logs` | `INSERT` |
 | Esquema `pgboss` | `USAGE`; sin `CREATE` |
-| `pgboss.job`, `pgboss.job_common`, `pgboss.job_dependency` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (consumo, reintentos, caducidad y retención de trabajos) |
-| `pgboss.queue` | `SELECT`, `UPDATE` (la supervisión anota sus tiempos y conteos en la fila de la cola) |
-| `pgboss.version` | `SELECT`, y `UPDATE` solo de `cron_on`, `bam_on`, `flow_on`, `reindex_on` y `monitor_backoff_on` (tiempos de la supervisión; nunca la versión del esquema) |
-| `pgboss.schedule`, `pgboss.subscription`, `pgboss.bam`, `pgboss.warning` | `SELECT` |
-| Todo lo demás | ninguno |
+| `pgboss.job_common` (tabla de la cola) | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (obtener, completar, reintentar y caducar trabajos; retención) |
+| `pgboss.job` (tabla padre) | `SELECT`, `INSERT`, `UPDATE` (al completar se actualizan los dependientes; la sentencia de fallo y reintento la nombra). Sin `DELETE`: pg-boss borra por la tabla de la cola |
+| `pgboss.job_dependency` | `SELECT` (al completar) y `DELETE` (limpieza del mantenimiento). Sin `INSERT` ni `UPDATE`: no se envían trabajos con dependencias |
+| `pgboss.queue` | `SELECT`, `UPDATE` (la supervisión y el mantenimiento anotan sus tiempos y conteos en la fila de la cola) |
+| `pgboss.version` | `SELECT`, y `UPDATE` solo de `flow_on` y `monitor_backoff_on` (resolución de flujos y supervisión; nunca la versión del esquema) |
+| Todo lo demás | ninguno. En `pgboss`, sin acceso a `schedule`, `subscription`, `bam` ni `warning`: solo los usarían el planificador, la publicación/suscripción, las migraciones de pg-boss y los avisos persistidos, todos desactivados |
 
-- Lo comprueba `apps/worker/src/worker.privileges.integration.test.ts`, como el rol del worker.
+- Lo comprueban, como el rol del worker, `apps/worker/src/worker.privileges.integration.test.ts` (los permisos exactos y los rechazos) y `apps/worker/src/pgboss.supervision.integration.test.ts` (una pasada real de supervisión y mantenimiento de pg-boss con esos permisos). Activar el planificador, los avisos persistidos, los trabajos con dependencias o la publicación/suscripción, o actualizar pg-boss, exige revisar estos permisos con una migración.
 - Las bases de desarrollo creadas antes de este cambio conservan `TEMPORARY` para `PUBLIC` hasta recrear el volumen (`pnpm db:down` y borrar el volumen) o ejecutar como propietario `REVOKE TEMPORARY ON DATABASE legaltech FROM PUBLIC;`. Producción replica esta separación con sus propios roles y secretos.
 
 ## Pendiente (fuera de esta rebanada)

@@ -25,8 +25,9 @@ LegalTech platform for traffic and transport infractions in Colombia.
   development; production provider and region pending, P3).
 - **Phase 3 (Documents), second slice:** every document goes through a security treatment in
   `apps/worker` (pg-boss job `document.scan`): ClamAV antivirus inside our infrastructure and, for
-  JPEG and PNG, a copy without identifying metadata (the original is kept untouched; PDFs are
-  never modified). Only a `CLEAN` document can be downloaded. No OCR yet (P4).
+  JPEG and PNG, a copy without the metadata the policy removes (EXIF/GPS, XMP, IPTC, comments; PNG
+  text chunks). The original is kept untouched and PDFs are never modified. Only a `CLEAN`
+  document can be downloaded; a periodic sweep recovers abandoned treatments. No OCR yet (P4).
 
 ## Prerequisites
 

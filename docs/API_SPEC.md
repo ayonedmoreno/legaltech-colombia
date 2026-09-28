@@ -1,6 +1,6 @@
 # API_SPEC.md
 
-**Versión:** 0.6 (antivirus y metadata de documentos, Fase 3)
+**Versión:** 0.7 (precisión sobre la metadata de las copias, Fase 3)
 **Fecha:** 2026-09-28
 **Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual.
 **Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios). OCR, pagos y demás se añaden con su fase.
@@ -46,7 +46,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `auth.session.revoked` | Revocación de una sesión propia por ID (`DELETE /api/auth/sessions/:sessionId`) | Usuario | — (la sesión revocada es la entidad) |
 | `case.created` | Creación de un caso (`POST /api/cases`), en la misma transacción que el caso y su historial | Usuario propietario | — (el caso es la entidad y `case_id`; `new_value`: `type`, `status`) |
 | `document.uploaded` | Documento subido a un caso propio (`POST /api/cases/:caseId/documents`), en la misma transacción que la fila del documento | Usuario propietario | — (el documento es la entidad y el caso, `case_id`; `new_value`: `fileType`, `fileSize`, `status`; nunca el nombre del archivo) |
-| `document.scan_clean` | El tratamiento de seguridad terminó sin amenazas (y, en JPEG o PNG, con su copia sin metadata): el documento pasa a `CLEAN`. Lo escribe el worker en la misma transacción que el estado | Sin actor (sistema) | — (documento y `case_id`; `new_value`: `status`) |
+| `document.scan_clean` | El tratamiento de seguridad terminó sin amenazas (y, en JPEG o PNG, con su copia sin la metadata que retira la política): el documento pasa a `CLEAN`. Lo escribe el worker en la misma transacción que el estado | Sin actor (sistema) | — (documento y `case_id`; `new_value`: `status`) |
 | `document.scan_infected` | El antivirus detectó una amenaza: el documento pasa a `INFECTED` | Sin actor (sistema) | — (`new_value`: `status`, `signature`) |
 | `document.scan_failed` | El tratamiento no se pudo completar tras agotar los intentos: el documento pasa a `SCAN_FAILED` | Sin actor (sistema) | — (`new_value`: `status`, `attempts`) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
@@ -293,7 +293,7 @@ Lista los documentos de un caso propio (`document:list`), del más reciente al m
 
 Autoriza la descarga de un documento propio (`document:download`) y devuelve una URL prefirmada de vida corta del almacenamiento privado (ARCHITECTURE_REPORT §2; `SECURITY_SPEC.md` §11).
 
-- **Solo un documento `CLEAN`.** Se descarga la versión que pasó el tratamiento de seguridad: la copia sin metadata para JPEG y PNG, el original intacto para PDF.
+- **Solo un documento `CLEAN`.** Se descarga la versión que pasó el tratamiento de seguridad: la copia sin la metadata que retira la política para JPEG y PNG (`DATABASE_SPEC.md`, «Metadata»), el original intacto para PDF.
 - **200:** `{ "url": "https://…", "expiresAt": "ISO-8601" }`. La URL caduca a los 60 s (`DOCUMENT_DOWNLOAD_URL_TTL_SECONDS`) y fuerza `Content-Disposition: attachment` con el nombre original y el `Content-Type` del tipo detectado al subirlo.
 - **401:** `UNAUTHENTICATED`. **404:** `NOT_FOUND` — documento de otro caso, caso ajeno o inexistente, o identificadores inválidos.
 - **403:** `FORBIDDEN` — documento propio que no está `CLEAN` (`UPLOADED`, `PENDING_SCAN`, `SCANNING`, `INFECTED` o `SCAN_FAILED`), con un único mensaje genérico; no se genera ninguna URL. El propietario ya ve el estado en el listado.
@@ -359,7 +359,7 @@ Los tipos son los 7 de `PROJECT_SPEC.md` s.9 paso 2 (comparendo, infracción, fo
 }
 ```
 
-No se devuelven las claves de almacenamiento, el usuario que lo subió, los intentos ni la firma detectada.
+No se devuelven las claves de almacenamiento, el usuario que lo subió, los intentos ni la firma detectada. `UPLOADED` solo aparece en documentos anteriores al antivirus: una subida nueva entra en `PENDING_SCAN`.
 
 ### `CaseStatusChange`
 
