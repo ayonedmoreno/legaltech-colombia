@@ -1,4 +1,5 @@
-// Identity slice only (DATABASE_SPEC.md v0.1). Other entities are added by approved slices.
+// Identity slice and the first Case slice (DATABASE_SPEC.md). Other entities are added by approved
+// slices.
 // Migrations are versioned SQL in ./migrations; see README.md in this package.
 
 generator client {
@@ -58,6 +59,8 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   auditLogs               AuditLog[]
   emailOutbox             EmailOutbox[]
+  cases                   Case[]
+  caseStatusChanges       CaseStatusHistory[]
 
   @@map("users")
 }
@@ -128,12 +131,15 @@ model AuditLog {
   requestId     String?  @map("request_id")
   ip            String?  @db.Inet
   userAgent     String?  @map("user_agent")
+  caseId        String?  @map("case_id") @db.Uuid
 
   actor User? @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  case  Case? @relation(fields: [caseId], references: [id], onDelete: Restrict)
 
   @@index([actorUserId, occurredAt])
   @@index([action, occurredAt])
   @@index([entityType, entityId])
+  @@index([caseId, occurredAt])
   @@map("audit_logs")
 }
 
@@ -161,4 +167,74 @@ model EmailOutbox {
 
   @@index([sentAt, createdAt])
   @@map("email_outbox")
+}
+
+/// The 7 case types of PROJECT_SPEC.md s.9 step 2 (comparendo, infracción, fotodetección,
+/// transporte, notificación, actuación administrativa, otro). No other type is added.
+enum CaseType {
+  TRAFFIC_CITATION
+  INFRACTION
+  PHOTO_ENFORCEMENT
+  TRANSPORT
+  NOTIFICATION
+  ADMINISTRATIVE_PROCEEDING
+  OTHER
+
+  @@map("case_type")
+}
+
+/// The 15 initial case states of PROJECT_SPEC.md s.8. In the first Case slice only DRAFT is
+/// reachable: there are no transitions yet (DATABASE_SPEC.md).
+enum CaseStatus {
+  DRAFT
+  DOCUMENTS_PENDING
+  PRELIMINARY_ANALYSIS
+  PAYMENT_PENDING
+  PAID
+  LEGAL_REVIEW
+  DOCUMENT_PREPARATION
+  READY_TO_FILE
+  FILED
+  WAITING_RESPONSE
+  RESPONSE_RECEIVED
+  FOLLOW_UP
+  RESOLVED
+  CLOSED
+  CANCELLED
+
+  @@map("case_status")
+}
+
+/// The central, generic object of the platform (PROJECT_SPEC.md s.7). First slice: owner, type
+/// and status only.
+model Case {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  type      CaseType
+  status    CaseStatus @default(DRAFT)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  statusHistory CaseStatusHistory[]
+  auditLogs     AuditLog[]
+
+  @@index([userId, createdAt])
+  @@map("cases")
+}
+
+/// Every status change of a case (PROJECT_SPEC.md s.8). Append-only for the application role.
+model CaseStatusHistory {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  caseId          String      @map("case_id") @db.Uuid
+  fromStatus      CaseStatus? @map("from_status")
+  toStatus        CaseStatus  @map("to_status")
+  changedByUserId String      @map("changed_by_user_id") @db.Uuid
+  changedAt       DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  case      Case @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  changedBy User @relation(fields: [changedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, changedAt])
+  @@map("case_status_history")
 }

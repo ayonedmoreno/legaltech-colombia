@@ -1,4 +1,6 @@
 export {
+  CaseStatus,
+  CaseType,
   EmailOutboxKind,
   Prisma,
   PrismaClient,
@@ -8,6 +10,8 @@ export {
 } from "@prisma/client";
 export type {
   AuditLog,
+  Case,
+  CaseStatusHistory,
   EmailOutbox,
   EmailVerificationToken,
   PasswordResetToken,

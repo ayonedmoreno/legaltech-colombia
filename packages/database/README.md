@@ -12,6 +12,8 @@ Prisma schema, migrations and database client. Only this package may import `@pr
     the intent only, never a token.
   - `20260927130000_app_role_least_privilege`: the application role gets only what the API uses
     (no `DELETE`/`TRUNCATE`, nothing on `_prisma_migrations`) and no default privileges.
+  - `20260927140000_cases`: first Case slice (`cases`, `case_status_history`, enums `case_type`
+    and `case_status`, `audit_logs.case_id`), with SELECT/INSERT only for the application role.
 - A migration that creates a table must `GRANT` the application role what it needs on it, and add
   the table to `apps/api/src/database.privileges.integration.test.ts` (`DATABASE_SPEC.md`).
 - Any change to `schema.prisma` must come with a migration and an update to `docs/DATABASE_SPEC.md`.
