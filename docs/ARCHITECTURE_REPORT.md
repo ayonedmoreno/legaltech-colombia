@@ -34,7 +34,7 @@
 | 8 | No hay trabajo asíncrono. | Worker separado y pg-boss. | **Aprobado (D1)** |
 | 9 | Entidades faltantes: `Quote/Offer`, `Outcome`, `TermsAcceptance`, `OcrResult`, `ExtractedEntity`, `AiRun`, `LegalRule`, `Deadline`, `Vehicle`/partes, `GeneratedDocument`, `Task`. | Incorporarlas en `DATABASE_SPEC.md` en la fase que corresponda. | Diferido |
 | 10 | `LegalSource` con un solo `embedding` y sin fin de vigencia. | `LegalSourceChunk`, más `valid_from` y `valid_to`. | Diferido a Fase 7 |
-| 11 | Estados del caso sin matriz de transiciones. | Máquina de estados explícita y con tests. | Diferido a Fase 2 |
+| 11 | Estados del caso sin matriz de transiciones. | Máquina de estados explícita y con tests. | Matriz documentada en `DATABASE_SPEC.md` y capa de dominio con tests (Fase 2); transiciones habilitadas por fase; V1-V8 pendientes |
 | 12 | Tablas `Role`/`Permission` frente a 4 roles fijos. | Roles como enum y matriz en código, con camino de evolución. | **Aprobado (D3)** |
 | 13 | Autenticación sin definir; webhook y idempotencia ausentes en la API. | Ver ADR-002 y fases de pagos. | **Aprobado (D2)** |
 | 14 | Riesgo de abuso de costos en diagnóstico pre-pago. | Cuotas y rate limits por usuario. | Diferido a Fases 3 y 7 |
@@ -184,7 +184,7 @@ El roadmap de la spec (s.34) sigue vigente hasta que se confirme un cambio. Se *
 ### Requieren validación jurídica colombiana (no se toman en este proyecto técnico)
 
 - Quién presta el servicio jurídico (profesionales propios o externos) y su responsabilidad.
-- Autorización o mandato para actuar ante las autoridades.
+- Autorización o mandato para actuar ante las autoridades (bloquea además la transición `READY_TO_FILE` → `FILED`, V8).
 - Términos y condiciones.
 - Política de reembolsos.
 - Tratamiento jurídico de los casos.
@@ -203,3 +203,9 @@ Hasta que se definan, el sistema no codifica ninguna de estas decisiones y las e
 | P4 | Proveedor de OCR, tras prueba con documentos reales anonimizados | Fase 3 |
 | P5 | Pasarela de pagos para Colombia | Fase 6 |
 | P6 | Proveedores de LLM y embeddings; responsable de curar el corpus | Fase 7 |
+| V1 | Posición y significado de `FOLLOW_UP` (`DATABASE_SPEC.md`, estados del caso) | Fase de profesionales |
+| V2 | Diferencia entre `RESOLVED` y `CLOSED`, y salidas de `RESPONSE_RECEIVED` | Fase de profesionales |
+| V4 | Posición de `LEGAL_REVIEW` respecto al pricing y la asignación profesional | Fases de pricing y de profesionales |
+| V5 | Retrocesos de estado, por ejemplo por información faltante | Fase de documentos |
+| V6 | Salida del caso cuando no procede actuar o el usuario no acepta la oferta | Fase de pricing |
+| V7 | Cancelación: quién cancela y desde qué estados (tras el pago, reembolsos: validación jurídica) | Fase en que se habilite |

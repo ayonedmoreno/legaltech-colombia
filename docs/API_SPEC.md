@@ -257,7 +257,7 @@ Devuelve un caso propio con su historial de estados (`case:read`).
 - **404:** `NOT_FOUND`, con la misma respuesta cuando el caso pertenece a otro usuario, no existe o el identificador no es un UUID (IDOR, ADR-003), y cuando la policy lo deniega.
 - Petición segura (GET): sin CSRF ni evento de auditoría.
 
-**Fuera de esta rebanada:** `PATCH /api/cases/:caseId` (`PROJECT_SPEC.md` s.28), la cancelación y cualquier otra transición de estado, el cuestionario dinámico y los endpoints de documentos, análisis, precio, pago y actuaciones.
+**Fuera de esta rebanada:** `PATCH /api/cases/:caseId` (`PROJECT_SPEC.md` s.28), la cancelación y cualquier otra transición de estado (la máquina de estados está documentada en `DATABASE_SPEC.md`; cada transición se expone en la fase que posee su disparador), el cuestionario dinámico y los endpoints de documentos, análisis, precio, pago y actuaciones.
 
 ## Esquemas
 

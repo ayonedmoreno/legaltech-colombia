@@ -156,8 +156,63 @@ Objeto central y genérico de la plataforma (`PROJECT_SPEC.md` s.7 y s.35). Prim
 
 - Índice: `(user_id, created_at)`, para el listado de los casos de un usuario.
 - Minimización de datos: sin texto libre ni datos personales; al crear el caso solo se elige el tipo (`PROJECT_SPEC.md` s.9 paso 2).
-- **Estados en esta rebanada:** el enum contiene los 15 estados de s.8, pero solo `DRAFT` es alcanzable: un caso nace en `DRAFT` y no hay transiciones (ni cancelación). `PROJECT_SPEC.md` no define la matriz de transiciones (ARCHITECTURE_REPORT, hallazgo 11); cada transición se añade con su fase y su decisión. La única fijada por la spec, `PAID`, solo la provocará el webhook de pagos (s.9 paso 9, s.23).
+- **Estados y transiciones:** ver «Estados y transiciones del caso». En esta rebanada solo `DRAFT` es alcanzable: un caso nace en `DRAFT` y ninguna transición está habilitada (tampoco la cancelación).
 - Los casos no se eliminan.
+
+#### Estados y transiciones del caso
+
+Máquina de estados de dominio (ARCHITECTURE_REPORT, hallazgo 11), aprobada el 2026-09-27. Está implementada como capa pura en `apps/api/src/modules/cases/case-status.ts`, sin endpoints ni persistencia propia. `case_status_history` es la única traza de los cambios de estado.
+
+Las fases siguen la numeración de `PROJECT_SPEC.md` s.34: Documents F3, Pricing F4, Payments F5, Legal AI F6, Professionals F7. ARCHITECTURE_REPORT §6 propone otro orden, sin decidir (P1).
+
+**Estados**
+
+| Estado | Paso de s.9 | Significado según los documentos | Fase |
+|---|---|---|---|
+| `DRAFT` | 2 | Caso creado; primer estado inicial (s.8) | F2 (implementado) |
+| `DOCUMENTS_PENDING` | 4 | Se esperan documentos | F3 |
+| `PRELIMINARY_ANALYSIS` | 5-6 | OCR, extracción y diagnóstico preliminar | F3 y F6 |
+| `PAYMENT_PENDING` | 7-8 | Valoración, oferta y pago pendiente (s.5) | F4 y F5 |
+| `PAID` | 9 | "Confirmado el pago, el caso pasa a `PAID`" | F5 |
+| `LEGAL_REVIEW` | 10 | "Se realiza el análisis completo" | F7 |
+| `DOCUMENT_PREPARATION` | 11 | "Se preparan las actuaciones que correspondan" | F7 |
+| `READY_TO_FILE` | 11 | Actuación lista y aprobada (ningún documento sale sin aprobación profesional; s.6 "aprobar documentos") | F7 |
+| `FILED` | 11 | Actuación radicada; la radicación automática no es prioritaria (s.33) | F7 |
+| `WAITING_RESPONSE` | 12 | Se espera la respuesta de la autoridad | F7 |
+| `RESPONSE_RECEIVED` | 13 | "Las respuestas recibidas se incorporan al expediente" | F7 |
+| `FOLLOW_UP` | — | Sin definir (V1) | Pendiente |
+| `RESOLVED` | — | Sin definir (V2) | Pendiente |
+| `CLOSED` | 14 | "Se cierra cuando finaliza la gestión contratada" | Pendiente (V2) |
+| `CANCELLED` | — | Sin fuente (V7) | Pendiente |
+
+**Transiciones documentadas.** Tipo **E**: explícita en los documentos; tipo **I**: inferida directamente del orden de s.8 y s.9. **Ninguna está habilitada**: cada una se habilita, con su endpoint o disparador, su permiso, el historial y `case.status_changed` en la misma transacción, en la fase que posee su disparador real.
+
+| # | Transición | Tipo | Disparador documentado | Actor | Fase |
+|---|---|---|---|---|---|
+| T0 | (creación) → `DRAFT` | E | Crear el caso (`POST /api/cases`) | USER propietario | F2, activa |
+| T1 | `DRAFT` → `DOCUMENTS_PENDING` | I | Datos iniciales completos (s.9 paso 3) | Pendiente | Cuestionario o F3 |
+| T2 | `DOCUMENTS_PENDING` → `PRELIMINARY_ANALYSIS` | I | Documentos cargados; "el sistema realizará OCR y extracción" (paso 5) | Sistema | F3 |
+| T3 | `PRELIMINARY_ANALYSIS` → `PAYMENT_PENDING` | I | Valoración y oferta (s.5; paso 7) | Pendiente | F4 |
+| T4 | `PAYMENT_PENDING` → `PAID` | **E** | Webhook de pago verificado; nunca el frontend (s.9 paso 9, s.23) | Sistema | F5 |
+| T5 | `PAID` → `LEGAL_REVIEW` | I | Apertura formal y gestión (pasos 9-10) | Pendiente | F7 |
+| T6 | `LEGAL_REVIEW` → `DOCUMENT_PREPARATION` | I | Análisis completo (paso 10) | PROFESSIONAL asignado (s.6 "actualizar estados") | F7 |
+| T7 | `DOCUMENT_PREPARATION` → `READY_TO_FILE` | I | Documentos aprobados (s.6 "aprobar documentos") | PROFESSIONAL asignado | F7 |
+| T8 | `READY_TO_FILE` → `FILED` | I | Actuación registrada (s.6 "registrar actuaciones") | PROFESSIONAL asignado | F7; además requiere V8 |
+| T9 | `FILED` → `WAITING_RESPONSE` | I | Actuación radicada (paso 12) | Pendiente | F7 |
+| T10 | `WAITING_RESPONSE` → `RESPONSE_RECEIVED` | I | Respuesta incorporada (paso 13) | PROFESSIONAL asignado | F7 |
+
+Ningún cambio de estado lo inicia el usuario (s.6: el usuario "consulta estados"); el actor de T1, T3, T5 y T9 queda pendiente de su fase.
+
+**Pendientes de decisión (no se resuelven por inferencia; ARCHITECTURE_REPORT §7):**
+
+- **V1:** posición y significado de `FOLLOW_UP` (s.9 pone "Seguimiento" antes de "Respuesta"; s.8, después de `RESPONSE_RECEIVED`).
+- **V2:** diferencia entre `RESOLVED` y `CLOSED`; por tanto, las salidas de `RESPONSE_RECEIVED` y el paso a `CLOSED`.
+- **V3:** `changed_by_user_id` es NOT NULL, pero T4 la dispara el sistema. La migración de la fase de pagos permitirá un cambio sin usuario (nulo o actor de sistema).
+- **V4:** posición de `LEGAL_REVIEW` respecto al pricing y la asignación profesional (hallazgo 1; s.21 "activar revisión profesional cuando corresponda").
+- **V5:** retrocesos, por ejemplo por información faltante (paso 6).
+- **V6:** salida cuando no procede actuar o el usuario no acepta la oferta.
+- **V7:** cancelación: quién cancela y desde qué estados (tras el pago, reembolsos: validación jurídica).
+- **V8:** autorización o mandato para radicar ante las autoridades (validación jurídica).
 
 ### `case_status_history`
 

@@ -26,6 +26,7 @@ La API exige `NODE_ENV` explícito (`development`, `test` o `production`); sin �
 Ver ADR-003. Resumen: rol más propiedad/asignación del recurso en cada request, protección explícita contra IDOR (404 para recursos ajenos), policies puras y tests de acceso cruzado.
 
 - Casos (Fase 2, primera rebanada): `case:create`, `case:list` y `case:read` solo para el rol `USER` y sobre sus propios casos; los repositorios filtran siempre por el usuario y un caso ajeno, inexistente o con identificador inválido responde 404. PROFESSIONAL, ADMIN y SUPER_ADMIN no acceden a casos hasta sus fases (asignaciones, acceso administrativo justificado y auditado, §11).
+- Estados del caso (`DATABASE_SPEC.md`, «Estados y transiciones del caso»): ninguna transición está habilitada todavía y el usuario no inicia ningún cambio de estado. `PAID` solo lo provocará un webhook de pago verificado (`PROJECT_SPEC.md` s.23); las transiciones de un profesional, solo sobre casos asignados, en su fase. Cada transición, al habilitarse, escribirá el historial y `case.status_changed` en la misma transacción que el cambio.
 
 ## 4. Transporte y navegador
 
