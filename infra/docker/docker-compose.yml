@@ -37,6 +37,25 @@ services:
     volumes:
       - seaweedfs_data:/data
 
+  # Antivirus for the document treatment (Phase 3; the worker streams each file to clamd).
+  # Pinned by digest: the tag is rebuilt daily with new signatures. Signature updates are off
+  # (CLAMAV_NO_FRESHCLAMD) so development and CI use the signatures baked into this image, with
+  # no network dependency; production must keep them updated (SECURITY_SPEC.md §12).
+  clamav:
+    image: clamav/clamav:1.5.4@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "true"
+    ports:
+      # clamd, bound to localhost only.
+      - "127.0.0.1:3310:3310"
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
 volumes:
   postgres_data:
   seaweedfs_data:

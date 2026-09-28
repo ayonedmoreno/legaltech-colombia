@@ -118,17 +118,35 @@ jobs:
           done
           docker logs seaweedfs; exit 1
 
-      # PrismaAuthRepository and the other repositories against the migrated database, as the
-      # application role (runtime privileges), and S3StorageProvider against SeaweedFS. The
-      # tests skip themselves without their variables, so fail here rather than let an empty
-      # value pass silently.
-      - name: Integration tests (PostgreSQL and S3)
+      # ClamAV for the document treatment tests, the same image as in development (pinned by
+      # digest, signatures baked in, updates off: no network dependency). Loading the signatures
+      # takes a while; clamd answers PONG once ready.
+      - name: Start ClamAV
+        run: |
+          docker run -d --name clamav -p 127.0.0.1:3310:3310 -e CLAMAV_NO_FRESHCLAMD=true             clamav/clamav:1.5.4@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a21ed3d51f0bfa5852825e663e67b0
+          for i in $(seq 1 180); do
+            docker exec clamav clamdcheck.sh >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs clamav; exit 1
+
+      # The repositories against the migrated database as the runtime roles (application and
+      # worker), pg-boss as installed by the migration, S3StorageProvider against SeaweedFS and
+      # the whole document treatment with ClamAV. The tests skip themselves without their
+      # variables, so fail here rather than let an empty value pass silently.
+      - name: Integration tests (PostgreSQL, pg-boss, S3 and ClamAV)
         env:
           INTEGRATION_DATABASE_URL: ${{ env.APP_PSQL_URL }}
+          INTEGRATION_WORKER_DATABASE_URL: postgresql://legaltech_worker:legaltech_worker_dev@localhost:5432/legaltech
           INTEGRATION_S3_ENDPOINT: http://127.0.0.1:8333
           INTEGRATION_S3_ACCESS_KEY_ID: legaltech_ci
           INTEGRATION_S3_SECRET_ACCESS_KEY: legaltech_ci_secret
+          INTEGRATION_CLAMAV_HOST: 127.0.0.1
+          INTEGRATION_CLAMAV_PORT: "3310"
         run: |
-          test -n "$INTEGRATION_DATABASE_URL" || { echo "INTEGRATION_DATABASE_URL is empty"; exit 1; }
-          test -n "$INTEGRATION_S3_ENDPOINT" || { echo "INTEGRATION_S3_ENDPOINT is empty"; exit 1; }
+          for v in INTEGRATION_DATABASE_URL INTEGRATION_WORKER_DATABASE_URL INTEGRATION_S3_ENDPOINT INTEGRATION_CLAMAV_PORT; do
+            test -n "${!v}" || { echo "$v is empty"; exit 1; }
+          done
           pnpm --filter @legaltech/api run test:integration
+          pnpm --filter @legaltech/storage run test:integration
+          pnpm --filter @legaltech/worker run test:integration

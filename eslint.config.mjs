@@ -68,6 +68,14 @@ export default tseslint.config(
       patterns: prismaClient.patterns,
     }),
   },
+  // packages/storage: object storage only; no framework, no ORM, no other workspace package.
+  {
+    files: ["packages/storage/**"],
+    rules: boundaries({
+      paths: [...frameworks, ...prismaClient.paths],
+      patterns: ["@legaltech/*", ...prismaClient.patterns],
+    }),
+  },
   // Only packages/database may import the ORM.
   {
     files: ["packages/database/**"],
@@ -77,6 +85,14 @@ export default tseslint.config(
     files: ["apps/api/**"],
     rules: boundaries({
       paths: ["next", "react", "react-dom", ...prismaClient.paths],
+      patterns: prismaClient.patterns,
+    }),
+  },
+  // apps/worker: background jobs; no web or HTTP framework, no ORM outside packages/database.
+  {
+    files: ["apps/worker/**"],
+    rules: boundaries({
+      paths: [...frameworks, ...prismaClient.paths],
       patterns: prismaClient.patterns,
     }),
   },
