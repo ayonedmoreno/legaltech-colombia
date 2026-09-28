@@ -20,6 +20,10 @@ Prisma schema, migrations and database client. Only this package may import `@pr
     treatment (states, scan columns, derived copy), the pg-boss 12.35.0 schema with the
     `document.scan` queue (installed here by the owner: no runtime role runs DDL or has `CREATE`),
     and the privileges of the worker role (`legaltech_worker`).
+  - `20260928110000_worker_pgboss_least_privilege`: revokes the pgboss privileges the worker does
+    not use with its configuration (no cron, persisted warnings, jobs with dependencies or
+    publish/subscribe). Enabling any of them, or upgrading pg-boss, needs a migration that
+    reviews these grants.
 - The worker role is created by `infra/docker/postgres/init/01-roles.sql` on a new volume. On an
   existing development volume, create it once as the owner (`CREATE ROLE legaltech_worker LOGIN
 PASSWORD 'legaltech_worker_dev'; GRANT CONNECT ON DATABASE legaltech TO legaltech_worker; GRANT

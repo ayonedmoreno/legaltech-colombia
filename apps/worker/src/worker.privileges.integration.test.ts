@@ -11,16 +11,26 @@ const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFEREN
 const EXPECTED_TABLES: Record<string, string[]> = {
   "public.documents": ["SELECT"],
   "public.audit_logs": ["INSERT"],
-  "pgboss.job": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  // Through the parent table: completion updates dependents, and the fail/retry statement names it.
+  "pgboss.job": ["SELECT", "INSERT", "UPDATE"],
+  // The queue's own table: fetch, complete, retry and retention.
   "pgboss.job_common": ["SELECT", "INSERT", "UPDATE", "DELETE"],
-  "pgboss.job_dependency": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  // Read on completion, cleaned up by maintenance; never inserted (no jobs with dependencies).
+  "pgboss.job_dependency": ["SELECT", "DELETE"],
   "pgboss.queue": ["SELECT", "UPDATE"],
   "pgboss.version": ["SELECT"],
-  "pgboss.schedule": ["SELECT"],
-  "pgboss.subscription": ["SELECT"],
-  "pgboss.bam": ["SELECT"],
-  "pgboss.warning": ["SELECT"],
 };
+
+/** pgboss.version: only the timers of what the worker runs (flows and supervision). */
+const VERSION_UPDATABLE = ["flow_on", "monitor_backoff_on"];
+const VERSION_COLUMNS = [
+  "version",
+  "cron_on",
+  "bam_on",
+  "flow_on",
+  "reindex_on",
+  "monitor_backoff_on",
+];
 
 describe.skipIf(!hasDatabase)("worker role privileges (PostgreSQL integration)", () => {
   let app: PrismaClient;
@@ -75,6 +85,31 @@ describe.skipIf(!hasDatabase)("worker role privileges (PostgreSQL integration)",
       Object.fromEntries(Object.entries(map).map(([t, list]) => [t, [...list].sort()]));
 
     expect(sorted(actual)).toEqual(sorted(EXPECTED_TABLES));
+  });
+
+  it("can update only the timers of flows and supervision in pgboss.version", async () => {
+    const rows = await worker.$queryRaw<Array<{ column: string }>>`
+      SELECT c AS "column" FROM unnest(${VERSION_COLUMNS}::text[]) AS c
+      WHERE has_column_privilege(current_user, 'pgboss.version', c, 'UPDATE')`;
+    expect(rows.map((row) => row.column).sort()).toEqual([...VERSION_UPDATABLE].sort());
+  });
+
+  it("is refused what pg-boss does not need with this configuration", async () => {
+    for (const statement of [
+      "DELETE FROM pgboss.job WHERE false",
+      "INSERT INTO pgboss.job_dependency SELECT * FROM pgboss.job_dependency WHERE false",
+      "UPDATE pgboss.job_dependency SET child_name = child_name WHERE false",
+      "SELECT count(*) FROM pgboss.schedule",
+      "SELECT count(*) FROM pgboss.subscription",
+      "SELECT count(*) FROM pgboss.bam",
+      "SELECT count(*) FROM pgboss.warning",
+      "UPDATE pgboss.version SET cron_on = cron_on WHERE false",
+      "UPDATE pgboss.version SET version = version WHERE false",
+    ]) {
+      await expect(worker.$executeRawUnsafe(statement), statement).rejects.toThrow(
+        /permission denied/,
+      );
+    }
   });
 
   it("can update only the scan columns of a document", async () => {
