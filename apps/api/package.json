@@ -10,7 +10,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:integration": "vitest run integration.test",
+    "test:integration": "vitest run integration.test --no-file-parallelism",
     "seed:dev": "dotenv -e ../../.env -- tsx src/scripts/seed-internal-users.cli.ts",
     "email:dispatch": "dotenv -e ../../.env -- tsx src/scripts/dispatch-emails.cli.ts"
   },
