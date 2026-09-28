@@ -3,23 +3,35 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { resolveApiInternalUrl } from "../../../config/api-proxy";
-import { CASE_STATUS_LABELS, CASE_TYPE_LABELS, formatDate } from "../../../lib/case-labels";
-import { getOwnCase } from "../../../lib/cases";
+import {
+  CASE_STATUS_LABELS,
+  CASE_TYPE_LABELS,
+  DOCUMENT_FILE_TYPE_LABELS,
+  formatDate,
+  formatFileSize,
+} from "../../../lib/case-labels";
+import { getCaseDocuments, getOwnCase } from "../../../lib/cases";
 import { SESSION_COOKIE } from "../../../lib/session";
 import { SessionKeeper } from "../../panel/session-keeper";
+import { DocumentDownload } from "./document-download";
+import { DocumentUpload } from "./document-upload";
 
 export const metadata: Metadata = { title: "Caso" };
 
 /**
- * One of the user's own cases with its status history (API_SPEC.md, GET /api/cases/:caseId).
+ * One of the user's own cases with its status history (API_SPEC.md, GET /api/cases/:caseId)
+ * and its documents (GET /api/cases/:caseId/documents); uploads only while the case is a DRAFT.
  * Another user's case, an unknown one and a malformed id all show the same "not found" page.
  */
 export default async function CasePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const sessionToken = (await cookies()).get(SESSION_COOKIE)?.value;
-  const result = await getOwnCase(id, sessionToken, resolveApiInternalUrl(process.env));
+  const apiInternalUrl = resolveApiInternalUrl(process.env);
+  const result = await getOwnCase(id, sessionToken, apiInternalUrl);
   if (result.kind === "unauthenticated") redirect("/iniciar-sesion");
   if (result.kind === "not_found") notFound();
+  const documents =
+    result.kind === "ok" ? await getCaseDocuments(id, sessionToken, apiInternalUrl) : null;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-6 py-10">
@@ -52,6 +64,37 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                 </li>
               ))}
             </ol>
+          </section>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-semibold">Documentos</h2>
+            {documents?.kind === "ok" ? (
+              documents.data.length === 0 ? (
+                <p className="text-sm text-slate-600">Todavía no has subido documentos.</p>
+              ) : (
+                <ul className="flex flex-col divide-y divide-slate-200 rounded border border-slate-200">
+                  {documents.data.map((document) => (
+                    <li
+                      key={document.id}
+                      className="flex items-center justify-between gap-4 px-4 py-2 text-sm"
+                    >
+                      <span className="flex flex-col">
+                        <span className="font-medium break-all">{document.fileName}</span>
+                        <span className="text-slate-600">
+                          {DOCUMENT_FILE_TYPE_LABELS[document.fileType]} ·{" "}
+                          {formatFileSize(document.fileSize)} · {formatDate(document.createdAt)}
+                        </span>
+                      </span>
+                      <DocumentDownload caseId={id} documentId={document.id} />
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : (
+              <p role="alert" className="text-sm text-slate-600">
+                No se pudieron cargar los documentos. Inténtalo de nuevo.
+              </p>
+            )}
+            {result.data.case.status === "DRAFT" ? <DocumentUpload caseId={id} /> : null}
           </section>
         </>
       ) : (

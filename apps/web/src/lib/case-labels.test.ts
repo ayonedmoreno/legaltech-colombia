@@ -1,6 +1,12 @@
 import type { Case, CaseStatus } from "@legaltech/contracts";
 import { describe, expect, it } from "vitest";
-import { CASE_STATUS_LABELS, CASE_TYPES, isClosedStatus, splitByActivity } from "./case-labels";
+import {
+  CASE_STATUS_LABELS,
+  CASE_TYPES,
+  formatFileSize,
+  isClosedStatus,
+  splitByActivity,
+} from "./case-labels";
 
 function aCase(id: string, status: CaseStatus): Case {
   const at = "2026-09-27T12:00:00.000Z";
@@ -37,5 +43,16 @@ describe("case labels and activity (Phase 2 decision D)", () => {
     const { active, closed } = splitByActivity(cases);
     expect(active.map((c) => c.id)).toEqual(["a", "c"]);
     expect(closed.map((c) => c.id)).toEqual(["b", "d"]);
+  });
+});
+
+describe("file sizes", () => {
+  it.each([
+    [512, "512 B"],
+    [2048, "2 KB"],
+    [1536 * 1024, "1,5 MB"],
+    [10 * 1024 * 1024, "10 MB"],
+  ])("shows %i bytes as %s", (bytes, text) => {
+    expect(formatFileSize(bytes)).toBe(text);
   });
 });

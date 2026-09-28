@@ -1,4 +1,10 @@
-import type { Case, CaseDetailResponse, CasesResponse } from "@legaltech/contracts";
+import type {
+  Case,
+  CaseDetailResponse,
+  CasesResponse,
+  Document,
+  DocumentsResponse,
+} from "@legaltech/contracts";
 import { SESSION_COOKIE } from "./session";
 
 /**
@@ -72,4 +78,26 @@ export async function getOwnCase(
     apiInternalUrl,
     fetchImpl,
   );
+}
+
+/** The documents of one of the user's cases (API_SPEC.md, GET /api/cases/:caseId/documents). */
+export async function getCaseDocuments(
+  caseId: string,
+  sessionToken: string | undefined,
+  apiInternalUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CasesRead<Document[]>> {
+  if (!CASE_ID_PATTERN.test(caseId)) {
+    if (!sessionToken || !SESSION_TOKEN_PATTERN.test(sessionToken)) {
+      return { kind: "unauthenticated" };
+    }
+    return { kind: "not_found" };
+  }
+  const result = await readFromApi<DocumentsResponse>(
+    `/api/cases/${caseId}/documents`,
+    sessionToken,
+    apiInternalUrl,
+    fetchImpl,
+  );
+  return result.kind === "ok" ? { kind: "ok", data: result.data.documents } : result;
 }

@@ -1,4 +1,4 @@
-import type { Case, CaseStatus, CaseType } from "@legaltech/contracts";
+import type { Case, CaseStatus, CaseType, DocumentFileType } from "@legaltech/contracts";
 
 /**
  * Spanish labels of the case types and statuses (ARCHITECTURE_REPORT D4: code in English, UI in
@@ -61,4 +61,25 @@ export function formatDate(iso: string): string {
     timeStyle: "short",
     timeZone: "America/Bogota",
   });
+}
+
+export const DOCUMENT_FILE_TYPE_LABELS: Record<DocumentFileType, string> = {
+  PDF: "PDF",
+  JPEG: "Imagen JPEG",
+  PNG: "Imagen PNG",
+};
+
+/** The upload limit shown to the user; the API enforces its own (DOCUMENT_MAX_BYTES). */
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** A file size for people: bytes, KB or MB, with a comma decimal (Colombia). */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes / 1024;
+  let unit: "KB" | "MB" = "KB";
+  if (value >= 1024) {
+    value /= 1024;
+    unit = "MB";
+  }
+  return `${value.toLocaleString("es-CO", { maximumFractionDigits: 1 })} ${unit}`;
 }

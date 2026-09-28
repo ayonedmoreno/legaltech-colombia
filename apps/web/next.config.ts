@@ -14,6 +14,12 @@ const apiInternalUrl = resolveApiInternalUrl(process.env);
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // The /api/* proxy buffers request bodies up to this size and silently truncates the rest.
+    // It must stay above the API's document limit (DOCUMENT_MAX_BYTES, 10 MB by default), so
+    // the API, not the proxy, always decides: a larger file reaches it whole and gets its 413.
+    middlewareClientMaxBodySize: "12mb",
+  },
   poweredByHeader: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getOwnCase, getOwnCases } from "./cases";
+import { getCaseDocuments, getOwnCase, getOwnCases } from "./cases";
 
 const API = "http://127.0.0.1:4000";
 // Synthetic, well-formed session token (base64url, 43 characters). Never a real token.
@@ -58,4 +58,25 @@ describe("server-side reads of the user's own cases", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("server-side read of a case's documents", () => {
+  it("asks the API for the case's documents with only the session cookie", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ documents: [] }));
+    expect(await getCaseDocuments(CASE_ID, TOKEN, API, fetchImpl)).toEqual({
+      kind: "ok",
+      data: [],
+    });
+    expect(fetchImpl.mock.calls[0]![0]).toBe(
+      `http://127.0.0.1:4000/api/cases/${CASE_ID}/documents`,
+    );
+  });
+
+  it("never sends a malformed case id to the API", async () => {
+    const fetchImpl = vi.fn();
+    expect(await getCaseDocuments("../auth/me", TOKEN, API, fetchImpl)).toEqual({
+      kind: "not_found",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

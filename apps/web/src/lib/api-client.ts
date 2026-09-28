@@ -4,6 +4,9 @@ import type {
   CaseResponse,
   CaseType,
   CsrfResponse,
+  Document,
+  DocumentDownloadResponse,
+  DocumentResponse,
   LoginRequest,
   LoginResponse,
   RegisterRequest,
@@ -27,10 +30,21 @@ type Fetch = typeof fetch;
 async function request<T>(
   fetchImpl: Fetch,
   path: string,
-  init: { method: "GET" | "POST"; body?: unknown; csrfToken?: string },
+  init: {
+    method: "GET" | "POST";
+    body?: unknown;
+    csrfToken?: string;
+    /** A raw body (a file upload), sent as application/octet-stream instead of JSON. */
+    file?: { content: Blob; name: string };
+  },
 ): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (init.body !== undefined) headers["content-type"] = "application/json";
+  if (init.file) {
+    headers["content-type"] = "application/octet-stream";
+    // The name travels in a header, never in the URL (API_SPEC.md).
+    headers["x-file-name"] = encodeURIComponent(init.file.name);
+  }
   if (init.csrfToken) headers["x-csrf-token"] = init.csrfToken;
 
   let response: Response;
@@ -40,7 +54,11 @@ async function request<T>(
       headers,
       credentials: "same-origin",
       cache: "no-store",
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body: init.file
+        ? init.file.content
+        : init.body === undefined
+          ? undefined
+          : JSON.stringify(init.body),
     });
   } catch {
     return { ok: false, status: 0, message: FALLBACK_MESSAGE };
@@ -150,4 +168,37 @@ export async function createCase(
     csrfToken: csrf.data.csrfToken,
   });
   return result.ok ? { ok: true, data: result.data.case } : result;
+}
+
+/**
+ * Uploads a file to one of the user's cases (API_SPEC.md, POST /api/cases/:caseId/documents):
+ * the raw file with its name, after fetching the session's CSRF token. The API checks the type
+ * by content and the size; this client only shapes the request.
+ */
+export async function uploadDocument(
+  caseId: string,
+  file: { content: Blob; name: string },
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<Document>> {
+  const csrf = await request<CsrfResponse>(fetchImpl, "/api/auth/csrf", { method: "GET" });
+  if (!csrf.ok) return csrf;
+  const result = await request<DocumentResponse>(
+    fetchImpl,
+    `/api/cases/${encodeURIComponent(caseId)}/documents`,
+    { method: "POST", file, csrfToken: csrf.data.csrfToken },
+  );
+  return result.ok ? { ok: true, data: result.data.document } : result;
+}
+
+/** A short-lived download URL for one of the user's documents (the API authorizes it). */
+export function getDocumentDownloadUrl(
+  caseId: string,
+  documentId: string,
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<DocumentDownloadResponse>> {
+  return request<DocumentDownloadResponse>(
+    fetchImpl,
+    `/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/download`,
+    { method: "GET" },
+  );
 }

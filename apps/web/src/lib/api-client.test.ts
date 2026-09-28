@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCase,
+  getDocumentDownloadUrl,
+  uploadDocument,
   forgotPassword,
   login,
   logout,
@@ -256,5 +258,72 @@ describe("createCase", () => {
       status: 404,
       message: "Recurso no encontrado.",
     });
+  });
+});
+
+describe("uploadDocument", () => {
+  const DOC = {
+    id: "8c2e0f1a-1b2c-4d3e-8f4a-5b6c7d8e9f00",
+    fileName: "Resolución 1.pdf",
+    fileType: "PDF",
+    fileSize: 4,
+    status: "UPLOADED",
+    ocrStatus: "NOT_STARTED",
+    createdAt: "2026-09-27T12:00:00.000Z",
+  };
+  const CASE_ID = "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11";
+
+  it("posts the raw file with its encoded name in a header and the CSRF token", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(json(200, { csrfToken: "csrf-1" }))
+      .mockResolvedValueOnce(json(201, { document: DOC }));
+    const content = new Blob(["%PDF"]);
+
+    expect(await uploadDocument(CASE_ID, { content, name: "Resolución 1.pdf" }, fetchImpl)).toEqual(
+      { ok: true, data: DOC },
+    );
+
+    const [path, init] = fetchImpl.mock.calls[1]!;
+    expect(path).toBe(`/api/cases/${CASE_ID}/documents`);
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(content);
+    expect(init.headers["content-type"]).toBe("application/octet-stream");
+    expect(init.headers["x-file-name"]).toBe("Resoluci%C3%B3n%201.pdf");
+    expect(init.headers["x-csrf-token"]).toBe("csrf-1");
+  });
+
+  it("does not upload without a CSRF token, and reports the API's message", async () => {
+    const noSession = vi
+      .fn()
+      .mockResolvedValue(apiError(401, "UNAUTHENTICATED", "Se requiere autenticación."));
+    expect(
+      (await uploadDocument(CASE_ID, { content: new Blob(["x"]), name: "a.pdf" }, noSession)).ok,
+    ).toBe(false);
+    expect(noSession).toHaveBeenCalledTimes(1);
+
+    const tooLarge = vi
+      .fn()
+      .mockResolvedValueOnce(json(200, { csrfToken: "csrf-1" }))
+      .mockResolvedValueOnce(
+        apiError(413, "PAYLOAD_TOO_LARGE", "La solicitud supera el tamaño máximo permitido."),
+      );
+    expect(
+      await uploadDocument(CASE_ID, { content: new Blob(["x"]), name: "a.pdf" }, tooLarge),
+    ).toEqual({
+      ok: false,
+      status: 413,
+      message: "La solicitud supera el tamaño máximo permitido.",
+    });
+  });
+});
+
+describe("getDocumentDownloadUrl", () => {
+  it("asks the API for a download URL", async () => {
+    const answer = { url: "https://storage.test/x", expiresAt: "2026-09-27T12:01:00.000Z" };
+    const fetchImpl = vi.fn().mockResolvedValue(json(200, answer));
+
+    expect(await getDocumentDownloadUrl("c1", "d1", fetchImpl)).toEqual({ ok: true, data: answer });
+    expect(fetchImpl.mock.calls[0]![0]).toBe("/api/cases/c1/documents/d1/download");
   });
 });
