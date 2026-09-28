@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createCase,
   forgotPassword,
   login,
   logout,
@@ -204,5 +205,56 @@ describe("rotateSession", () => {
 
     expect(result.ok).toBe(false);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createCase", () => {
+  const CASE = {
+    id: "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11",
+    type: "TRANSPORT",
+    status: "DRAFT",
+    createdAt: "2026-09-27T12:00:00.000Z",
+    updatedAt: "2026-09-27T12:00:00.000Z",
+  };
+
+  it("fetches the CSRF token, then posts only the type with it", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(json(200, { csrfToken: "csrf-1" }))
+      .mockResolvedValueOnce(json(201, { case: CASE }));
+
+    expect(await createCase("TRANSPORT", fetchImpl)).toEqual({ ok: true, data: CASE });
+
+    const [path, init] = fetchImpl.mock.calls[1]!;
+    expect(path).toBe("/api/cases");
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(init.headers["x-csrf-token"]).toBe("csrf-1");
+    expect(JSON.parse(init.body)).toEqual({ type: "TRANSPORT" });
+  });
+
+  it("does not post without a CSRF token (no valid session)", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(apiError(401, "UNAUTHENTICATED", "Se requiere autenticación."));
+
+    expect(await createCase("OTHER", fetchImpl)).toEqual({
+      ok: false,
+      status: 401,
+      message: "Se requiere autenticación.",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the API's generic message when the creation is refused", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(json(200, { csrfToken: "csrf-1" }))
+      .mockResolvedValueOnce(apiError(404, "NOT_FOUND", "Recurso no encontrado."));
+
+    expect(await createCase("OTHER", fetchImpl)).toEqual({
+      ok: false,
+      status: 404,
+      message: "Recurso no encontrado.",
+    });
   });
 });

@@ -1,5 +1,8 @@
 import type {
   ApiError,
+  Case,
+  CaseResponse,
+  CaseType,
   CsrfResponse,
   LoginRequest,
   LoginResponse,
@@ -129,4 +132,22 @@ export async function logout(fetchImpl: Fetch = fetch): Promise<ApiResult<void>>
   // No valid session: logout is still safe and needs no token (API_SPEC.md).
   const csrfToken = csrf.ok ? csrf.data.csrfToken : undefined;
   return request<void>(fetchImpl, "/api/auth/logout", { method: "POST", csrfToken });
+}
+
+/**
+ * Creates a case of the given type for the current user (API_SPEC.md, POST /api/cases): fetches
+ * the session's CSRF token, then posts only the type. The API sets the status (DRAFT) and owner.
+ */
+export async function createCase(
+  type: CaseType,
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<Case>> {
+  const csrf = await request<CsrfResponse>(fetchImpl, "/api/auth/csrf", { method: "GET" });
+  if (!csrf.ok) return csrf;
+  const result = await request<CaseResponse>(fetchImpl, "/api/cases", {
+    method: "POST",
+    body: { type },
+    csrfToken: csrf.data.csrfToken,
+  });
+  return result.ok ? { ok: true, data: result.data.case } : result;
 }
