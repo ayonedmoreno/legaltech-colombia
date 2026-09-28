@@ -1,4 +1,4 @@
-// Identity slice and the first Case slice (DATABASE_SPEC.md). Other entities are added by approved
+// Identity slice, Case slices and the first Documents slice (DATABASE_SPEC.md). Other entities are added by approved
 // slices.
 // Migrations are versioned SQL in ./migrations; see README.md in this package.
 
@@ -61,6 +61,7 @@ model User {
   emailOutbox             EmailOutbox[]
   cases                   Case[]
   caseStatusChanges       CaseStatusHistory[]
+  uploadedDocuments       Document[]
 
   @@map("users")
 }
@@ -218,6 +219,7 @@ model Case {
   user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
   statusHistory CaseStatusHistory[]
   auditLogs     AuditLog[]
+  documents     Document[]
 
   @@index([userId, createdAt])
   @@map("cases")
@@ -237,4 +239,48 @@ model CaseStatusHistory {
 
   @@index([caseId, changedAt])
   @@map("case_status_history")
+}
+
+/// Type of an uploaded file, detected from its content (PROJECT_SPEC.md s.9 step 4).
+enum DocumentFileType {
+  PDF
+  JPEG
+  PNG
+
+  @@map("document_file_type")
+}
+
+/// First Documents slice: every document is UPLOADED; later values arrive with the antivirus.
+enum DocumentStatus {
+  UPLOADED
+
+  @@map("document_status")
+}
+
+/// First Documents slice: OCR has not started; later values arrive with the OCR (P4).
+enum DocumentOcrStatus {
+  NOT_STARTED
+
+  @@map("document_ocr_status")
+}
+
+/// A document of a case (PROJECT_SPEC.md s.16). The file lives in private object storage
+/// (StorageProvider); only its metadata is stored here.
+model Document {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  caseId           String            @map("case_id") @db.Uuid
+  fileName         String            @map("file_name")
+  fileType         DocumentFileType  @map("file_type")
+  storageKey       String            @unique @map("storage_key")
+  fileSize         Int               @map("file_size")
+  uploadedByUserId String            @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime          @map("created_at") @db.Timestamptz(6)
+  status           DocumentStatus    @default(UPLOADED)
+  ocrStatus        DocumentOcrStatus @default(NOT_STARTED) @map("ocr_status")
+
+  case       Case @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  uploadedBy User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, createdAt])
+  @@map("documents")
 }

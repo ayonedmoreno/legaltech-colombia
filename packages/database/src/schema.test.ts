@@ -11,6 +11,7 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
         "AuditLog",
         "Case",
         "CaseStatusHistory",
+        "Document",
         "EmailOutbox",
         "EmailVerificationToken",
         "PasswordResetToken",
@@ -72,9 +73,15 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
     ]);
   });
 
-  it("keeps the first Case slice free of later-phase data (no Infraction, Authority, documents)", () => {
+  it("keeps Case free of later-phase data (no Infraction, Authority, payments, assignments)", () => {
     const body = /model Case {([^}]*)}/.exec(schema)?.[1] ?? "";
-    expect(body).not.toMatch(/infraction|authority|document|payment|assign/i);
+    expect(body).not.toMatch(/infraction|authority|payment|assign/i);
+  });
+
+  it("stores document metadata only: no file content in PostgreSQL (PROJECT_SPEC s.16)", () => {
+    const body = /model Document {([^}]*)}/.exec(schema)?.[1] ?? "";
+    expect(body).toMatch(/storageKey/);
+    expect(body).not.toMatch(/Bytes|content/i);
   });
 
   it("does not reference pgvector", () => {

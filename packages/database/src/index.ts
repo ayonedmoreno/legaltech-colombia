@@ -1,6 +1,9 @@
 export {
   CaseStatus,
   CaseType,
+  DocumentFileType,
+  DocumentOcrStatus,
+  DocumentStatus,
   EmailOutboxKind,
   Prisma,
   PrismaClient,
@@ -12,6 +15,7 @@ export type {
   AuditLog,
   Case,
   CaseStatusHistory,
+  Document,
   EmailOutbox,
   EmailVerificationToken,
   PasswordResetToken,
