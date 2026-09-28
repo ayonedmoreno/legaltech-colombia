@@ -7,6 +7,8 @@ import { hashPassword } from "../../security/password.js";
 import { TEST_ENV } from "../../test-support/build-test-app.js";
 import { LOGIN_LOCK_NAMESPACE, PrismaAuthRepository, loginLockKey } from "./auth.repository.js";
 import { AuthService } from "./auth.service.js";
+import { PrismaCasesRepository } from "../cases/cases.repository.js";
+import { CasesService } from "../cases/cases.service.js";
 import {
   DuplicateEmailError,
   LoginAttemptUnavailableError,
@@ -1039,6 +1041,7 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
         env: TEST_ENV,
         health: { checkDatabase: async () => true },
         authService: new AuthService({ repository, isProduction: false }),
+        casesService: new CasesService({ repository: new PrismaCasesRepository(prisma) }),
       });
     }
 

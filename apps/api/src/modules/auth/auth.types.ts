@@ -127,6 +127,10 @@ export interface AuditLogEntry {
   action: string;
   entityType?: string | null;
   entityId?: string | null;
+  /** The case the event belongs to (`audit_logs.case_id`, PROJECT_SPEC.md s.25). */
+  caseId?: string | null;
+  /** The new state of the entity, when the event records a change; never a secret. */
+  newValue?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   requestId: string | null;
   ip: string | null;

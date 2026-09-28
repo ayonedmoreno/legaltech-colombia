@@ -19,6 +19,8 @@ const EXPECTED: Record<string, string[]> = {
   password_reset_tokens: ["SELECT", "INSERT", "UPDATE"],
   email_outbox: ["SELECT", "INSERT", "UPDATE"],
   audit_logs: ["SELECT", "INSERT"],
+  cases: ["SELECT", "INSERT"],
+  case_status_history: ["SELECT", "INSERT"],
   _prisma_migrations: [],
 };
 

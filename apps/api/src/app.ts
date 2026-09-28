@@ -5,6 +5,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Env } from "./config/env.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import type { AuthService } from "./modules/auth/auth.service.js";
+import { casesRoutes } from "./modules/cases/cases.routes.js";
+import type { CasesService } from "./modules/cases/cases.service.js";
 import { healthRoutes, type HealthDeps } from "./modules/health/health.routes.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 
@@ -12,11 +14,17 @@ export interface AppOptions {
   env: Env;
   health: HealthDeps;
   authService: AuthService;
+  casesService: CasesService;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
-export async function buildApp({ env, health, authService }: AppOptions): Promise<FastifyInstance> {
+export async function buildApp({
+  env,
+  health,
+  authService,
+  casesService,
+}: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: env.LOG_LEVEL,
@@ -51,6 +59,12 @@ export async function buildApp({ env, health, authService }: AppOptions): Promis
   await authService.warmUp();
   await app.register(healthRoutes, { prefix: "/api/health", checkDatabase: health.checkDatabase });
   await app.register(authRoutes, { prefix: "/api/auth", authService, appOrigin: env.APP_ORIGIN });
+  await app.register(casesRoutes, {
+    prefix: "/api/cases",
+    authService,
+    casesService,
+    appOrigin: env.APP_ORIGIN,
+  });
 
   return app;
 }

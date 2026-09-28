@@ -14,7 +14,7 @@ export interface Actor {
 }
 
 /** Why a request was denied. For tests and logs only; never sent to the client. */
-export type DenyReason = "inactive_actor" | "not_owner" | "unknown_action";
+export type DenyReason = "inactive_actor" | "role_not_allowed" | "not_owner" | "unknown_action";
 
 export type Decision = { allowed: true } | { allowed: false; reason: DenyReason };
 

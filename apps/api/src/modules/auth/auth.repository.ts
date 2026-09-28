@@ -57,13 +57,16 @@ function isLoginAttemptUnavailable(error: unknown): boolean {
   return error.code === "P2010" && (error.meta as { code?: unknown } | undefined)?.code === "55P03";
 }
 
-function auditLogData(entry: AuditLogEntry) {
+/** The `audit_logs` row of an audit entry; shared by every module that writes audit events. */
+export function auditLogData(entry: AuditLogEntry) {
   return {
     actorUserId: entry.actorUserId,
     actorRole: entry.actorRole,
     action: entry.action,
     entityType: entry.entityType ?? undefined,
     entityId: entry.entityId ?? undefined,
+    caseId: entry.caseId ?? undefined,
+    newValue: (entry.newValue as Prisma.InputJsonObject | undefined) ?? undefined,
     metadata: (entry.metadata as Prisma.InputJsonObject | undefined) ?? undefined,
     requestId: entry.requestId,
     ip: entry.ip,
