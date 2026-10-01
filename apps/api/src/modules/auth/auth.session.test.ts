@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { generateOpaqueToken } from "../../security/crypto.js";
 import { FakeAuthRepository } from "./auth.repository.fake.js";
 import { createSessionForUser, loadValidSession } from "./auth.session.js";
 
@@ -83,5 +84,28 @@ describe("session lifecycle", () => {
 
     now = new Date(new Date("2026-01-01T00:00:00Z").getTime() + 31 * 24 * 60 * 60 * 1000);
     expect(await loadValidSession(repository, created.sessionRaw, clock)).toBeNull();
+  });
+
+  it("enforces the absolute expiry on its own, even if the idle window says otherwise", async () => {
+    // The sliding window is always capped at the absolute expiry, so the test above would pass
+    // on the idle check alone. Here the stored idle window runs past the absolute ceiling (as a
+    // future code path or a bad row could leave it): the absolute expiry must still apply.
+    const repository = new FakeAuthRepository();
+    const user = await seedUser(repository);
+    const now = new Date("2026-01-01T00:00:00Z");
+    const token = generateOpaqueToken();
+    await repository.createSession({
+      userId: user.id,
+      tokenHash: token.hash,
+      csrfTokenHash: generateOpaqueToken().hash,
+      createdAt: new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000),
+      lastSeenAt: new Date(now.getTime() - 60_000),
+      idleExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+      absoluteExpiresAt: new Date(now.getTime() - 1),
+      ip: null,
+      userAgent: null,
+    });
+
+    expect(await loadValidSession(repository, token.raw, () => now)).toBeNull();
   });
 });

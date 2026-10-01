@@ -74,7 +74,7 @@ export function auditLogData(entry: AuditLogEntry) {
   };
 }
 
-/** Prisma-backed implementation of AuthRepository. Only this file imports @prisma/client types for auth. */
+/** Prisma-backed implementation of AuthRepository (Prisma types come from @legaltech/database). */
 export class PrismaAuthRepository implements AuthRepository {
   private readonly prisma: PrismaClient;
 

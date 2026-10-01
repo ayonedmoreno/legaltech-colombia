@@ -3,8 +3,9 @@ import { allow, deny, type Actor, type Decision } from "../../common/policy.js";
 /**
  * Auth module policy (ADR-003). In Sprint 1 the matrix only covers authentication actions on
  * the actor's own resources, for every role: `user:read` on oneself (GET /api/auth/me) and
- * `session:list` / `session:revoke` on one's own sessions (endpoints designed in API_SPEC.md,
- * not implemented yet). Actions on other users' resources (e.g. ADMIN managing users) arrive
+ * `session:list` / `session:revoke` on one's own sessions (GET /api/auth/sessions,
+ * DELETE /api/auth/sessions/:sessionId, POST /api/auth/logout-all and the session rotation).
+ * Actions on other users' resources (e.g. ADMIN managing users) arrive
  * with their phase, together with their rules and cross-access tests.
  */
 export type AuthAction = "user:read" | "session:list" | "session:revoke";
