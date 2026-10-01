@@ -1,9 +1,9 @@
 # API_SPEC.md
 
-**Versión:** 0.7 (precisión sobre la metadata de las copias, Fase 3)
-**Fecha:** 2026-09-28
+**Versión:** 0.8 (límite único, cuota, almacenamiento y reprocesamiento de documentos, Fase 3)
+**Fecha:** 2026-10-01
 **Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual.
-**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios). OCR, pagos y demás se añaden con su fase.
+**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios; reprocesamiento administrativo de un tratamiento fallido). OCR, pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
 Este documento se mantiene manualmente junto a los esquemas de `packages/contracts` (la API todavía no genera OpenAPI). Toda modificación de un endpoint actualiza este archivo en el mismo cambio.
@@ -20,7 +20,7 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 - **Cookie de sesión** `__Host-session`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, sin atributo `Domain`. El prefijo `__Host-` se usa siempre (también en desarrollo local, donde los navegadores aceptan cookies `Secure` en `http://localhost`).
 - **Cookie CSRF** `__Host-csrf`: `Secure`, `SameSite=Lax`, `Path=/`, sin `Domain` y **sin** `HttpOnly` a propósito (ver doble envío abajo).
 - No se firman las cookies: el token es en sí un secreto de alta entropía validado contra su hash.
-- **Expiración:** por inactividad (deslizante: cada petición autenticada la extiende) y absoluta (techo fijo que la actividad no puede extender). Valores por rol en `auth.session.ts`: `USER` 7 días de inactividad y 30 absolutos; roles internos más cortos (a confirmar, ADR-002).
+- **Expiración:** por inactividad (deslizante: cada petición autenticada la extiende) y absoluta (techo fijo que la actividad no puede extender). Valores por rol en `auth.session.ts`: `USER` 7 días de inactividad y 30 absolutos; roles internos más cortos, hoy `PROFESSIONAL` y `ADMIN` 1 día y 7 días, `SUPER_ADMIN` 12 h y 3 días (a confirmar, ADR-002).
 - **Revocación:** una sesión revocada (`revoked_at`) deja de autenticar de inmediato. Restablecer la contraseña revoca todas las sesiones del usuario (motivo `PASSWORD_RESET`). La rotación del identificador (ADR-002) se describe en `POST /api/auth/session/rotate`; al iniciar sesión, la sesión que ya tuviera el navegador se revoca con motivo `ROTATED`.
 
 ### CSRF: doble envío de cookie (ADR-002)
@@ -49,9 +49,11 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `document.scan_clean` | El tratamiento de seguridad terminó sin amenazas (y, en JPEG o PNG, con su copia sin la metadata que retira la política): el documento pasa a `CLEAN`. Lo escribe el worker en la misma transacción que el estado | Sin actor (sistema) | — (documento y `case_id`; `new_value`: `status`) |
 | `document.scan_infected` | El antivirus detectó una amenaza: el documento pasa a `INFECTED` | Sin actor (sistema) | — (`new_value`: `status`, `signature`) |
 | `document.scan_failed` | El tratamiento no se pudo completar tras agotar los intentos: el documento pasa a `SCAN_FAILED` | Sin actor (sistema) | — (`new_value`: `status`, `attempts`) |
+| `document.reprocess_requested` | Un ADMIN pide reprocesar un documento `SCAN_FAILED` (`POST /api/admin/documents/:documentId/reprocess`), en la misma transacción que el job `document.reprocess` | ADMIN | `reason` (la justificación; nunca el nombre del archivo) |
+| `document.scan_reprocessed` | El worker devuelve a `PENDING_SCAN` un documento que seguía `SCAN_FAILED`, con una ronda nueva de intentos y su job `document.scan`, en la misma transacción | Sin actor (sistema) | — (`new_value`: `status`, `previousAttempts`) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
-Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Todos los eventos guardan `requestId`, `ip` y `userAgent`.
+Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Los eventos de una petición HTTP guardan `requestId`, `ip` y `userAgent`; los del sistema sin petición (`document.scan_*`, escritos por el worker, y `user.seeded`) los dejan vacíos.
 
 ### Formato de error
 
@@ -66,7 +68,7 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 }
 ```
 
-`message` es para mostrar al usuario en español; `code` es estable, en inglés y está definido en `packages/contracts/src/error.ts`. `details` solo se usa en errores de validación (`field`, `issue`). Un encabezado `x-request-id` acompaña a cada respuesta.
+`message` es para mostrar al usuario en español; `code` es estable, en inglés y está definido en `packages/contracts/src/error.ts`. `details` solo se usa en errores de validación (`field`, `issue`). Un encabezado `x-request-id` acompaña a cada respuesta: el que envió el cliente si tiene 1 a 64 caracteres de `[A-Za-z0-9._-]`, o uno generado por la API. Es un identificador de correlación, no una prueba de autenticidad.
 
 ### Códigos de error
 
@@ -76,12 +78,12 @@ Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. T
 | 401 | `UNAUTHENTICATED` | Sin sesión válida (ausente, revocada, expirada, o usuario suspendido) |
 | 401 | `INVALID_CREDENTIALS` | Email o contraseña incorrectos, o cuenta suspendida (mismo mensaje y forma) |
 | 403 | `CSRF_INVALID` | Token CSRF ausente o inválido, u origen no permitido |
-| 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002) |
+| 403 | `FORBIDDEN` | Rol ADMIN o SUPER_ADMIN intentando iniciar sesión en producción sin MFA (ADR-002); subir un documento a un caso propio que no está en `DRAFT` o que excedería la cuota de espacio del usuario; descargar un documento propio que no está `CLEAN`; reprocesar un documento que no está `SCAN_FAILED` |
 | 404 | `NOT_FOUND` | Ruta inexistente, o recurso ajeno, inexistente o con identificador inválido (IDOR, ADR-003) |
-| 413 | `PAYLOAD_TOO_LARGE` | Cuerpo mayor que el límite del endpoint (por ejemplo, un documento de más de 10 MB) |
+| 413 | `PAYLOAD_TOO_LARGE` | Cuerpo mayor que el límite del endpoint (por ejemplo, un documento de más de 10 MiB) |
 | 415 | `VALIDATION_ERROR` | `Content-Type` no admitido por el endpoint |
 | 429 | `RATE_LIMITED` | Límite por IP o por cuenta excedido (`Retry-After`); mismo mensaje en ambos casos |
-| 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos |
+| 503 | `SERVICE_UNAVAILABLE` | No se pudo evaluar el límite por cuenta del login (bloqueo, conexión o transacción no disponibles); el intento no se concede (`Retry-After: 1`), sin detalles internos. También: el almacenamiento de documentos falla o no responde al subir un documento (no se guarda nada) |
 | 500 | `INTERNAL_ERROR` | Error inesperado, sin detalles internos |
 
 `INVALID_OR_EXPIRED_TOKEN` lo usan `POST /api/auth/email/verify` y `POST /api/auth/password/reset` para un token desconocido, usado o caducado (misma respuesta en los tres casos).
@@ -272,12 +274,15 @@ Sube un documento a un caso propio (`document:upload`; `PROJECT_SPEC.md` s.9 pas
 - **Cuerpo:** el archivo en bruto, con `Content-Type: application/octet-stream`.
 - **Encabezado `X-File-Name`:** nombre original del archivo, codificado con `encodeURIComponent`. Obligatorio; de 1 a 255 caracteres una vez decodificado, sin `/`, `\` ni caracteres de control. No va en la URL, para que no aparezca en logs.
 - **Tipos admitidos:** PDF, JPEG y PNG, determinados por la firma del contenido (magic bytes), no por la extensión ni por el `Content-Type`.
-- **Tamaño máximo:** 10 MB (`DOCUMENT_MAX_BYTES`). Es un valor técnico provisional y configurable: los documentos exigen un límite (`SECURITY_SPEC.md` §11) pero no fijan la cifra.
+- **Tamaño máximo:** 10 MiB (`DOCUMENT_MAX_BYTES`, en `packages/contracts`), un único límite para toda la plataforma (decisión del 2026-10-01): valor técnico provisional —los documentos exigen un límite (`SECURITY_SPEC.md` §11) pero no fijan la cifra— que no se puede configurar por encima. La web lo comprueba antes de enviar el archivo. Su proxy `/api/*` (ADR-002) responde él mismo, con este mismo 413, a una subida cuyo `Content-Length` declarado supere el límite (reenviarla hacía que un archivo muy grande acabara en 500 del proxy); el resto lo reenvía con un búfer algo mayor (11 MiB, derivado de la misma constante) y la API lo vuelve a comprobar.
+- **Cuota:** 100 MiB por usuario (`DOCUMENT_QUOTA_BYTES`): la suma del tamaño de sus documentos, en todos sus casos y en cualquier estado; un documento cuenta mientras existe. Se mira antes de escribir en el almacenamiento y se comprueba de nuevo, bajo un bloqueo por usuario, al escribir la fila, así que dos subidas simultáneas no pueden superarla. Valor técnico provisional; sin cuotas por IP ni por periodo. Mientras no exista la eliminación de documentos, cuenta todo documento almacenado, también `INFECTED` y `SCAN_FAILED`; cómo se libera la cuota queda pendiente de la futura funcionalidad de eliminación y retención, así que los 100 MiB no son todavía una cuota acumulativa permanente decidida por producto.
+- **Almacenamiento:** las peticiones al almacenamiento tienen timeouts (5 s para conectar, 30 s de inactividad y 45 s por petición) y los reintentos estándar del SDK. Si guardar el archivo falla o caduca, **503** `SERVICE_UNAVAILABLE` ("Servicio no disponible temporalmente. Inténtalo más tarde.") y no queda ningún documento; el objeto, que pudo llegar a escribirse, se borra. Si después falla la escritura en la base de datos, el archivo también se borra. Si un borrado falla, el objeto queda sin documento (nunca se sirve) y se registra en el log como `storage.orphan_object`, con su clave, para reconciliarlo.
 - **Estado del caso:** solo en `DRAFT`.
 - **201:** `{ "document": Document }`, con `status: "PENDING_SCAN"` y `ocrStatus: "NOT_STARTED"`. La respuesta no espera al antivirus: en la misma transacción que la fila se encola el job `document.scan`, que procesa el worker.
 - **400:** `VALIDATION_ERROR` — cuerpo vacío, falta `X-File-Name` o es inválido, o el contenido no es PDF, JPEG ni PNG.
 - **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
-- **403:** `FORBIDDEN` — el caso propio no está en `DRAFT` (no ocurre todavía: no hay transiciones).
+- **403:** `FORBIDDEN` — el caso propio no está en `DRAFT` (no ocurre todavía: no hay transiciones), o la subida excedería la cuota ("Has alcanzado el espacio máximo para tus documentos (100 MB)."); no se guarda nada.
+- **503:** `SERVICE_UNAVAILABLE` — el almacenamiento falló o no respondió; no se guarda nada.
 - **404:** `NOT_FOUND` — caso ajeno, inexistente o con identificador inválido, o policy denegada (roles distintos de `USER`).
 - **413:** `PAYLOAD_TOO_LARGE`. **415:** `VALIDATION_ERROR` si el `Content-Type` no es `application/octet-stream`.
 - **Auditoría:** `document.uploaded`.
@@ -299,7 +304,19 @@ Autoriza la descarga de un documento propio (`document:download`) y devuelve una
 - **403:** `FORBIDDEN` — documento propio que no está `CLEAN` (`UPLOADED`, `PENDING_SCAN`, `SCANNING`, `INFECTED` o `SCAN_FAILED`), con un único mensaje genérico; no se genera ninguna URL. El propietario ya ve el estado en el listado.
 - Petición segura (GET): sin CSRF ni evento de auditoría (como las demás lecturas del propietario).
 
-**Fuera de esta rebanada:** OCR, limpieza de metadata de PDF (decisión pendiente), volver a tratar un documento `SCAN_FAILED`, versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
+### `POST /api/admin/documents/:documentId/reprocess`
+
+Pide que un documento cuyo tratamiento de seguridad falló (`SCAN_FAILED`) se trate otra vez (`document:reprocess`; decisión del 2026-10-01). Solo `ADMIN` (`PROJECT_SPEC.md` s.6: "administrar documentos"): es una acción administrativa sobre datos de otro usuario, justificada y auditada (ADR-003). Requiere sesión y CSRF; la policy se comprueba antes de leer la petición.
+
+- **Cuerpo:** `{ "reason": "string" }`: la justificación, de 1 a 500 caracteres. Cualquier otro campo produce `VALIDATION_ERROR`.
+- **202:** `{ "status": "accepted" }`. En una transacción se escriben `document.reprocess_requested` (actor ADMIN, con la justificación) y el job `document.reprocess`. El worker devuelve el documento a `PENDING_SCAN` solo si sigue `SCAN_FAILED`, con una ronda nueva de 5 intentos, y lo trata de nuevo (`DATABASE_SPEC.md`). Nunca reprocesa un `INFECTED`.
+- **400:** `VALIDATION_ERROR` — sin justificación válida.
+- **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
+- **403:** `FORBIDDEN` — el documento no está `SCAN_FAILED` (`INFECTED`, `CLEAN`, pendiente o en tratamiento): solo se reintenta un tratamiento fallido.
+- **404:** `NOT_FOUND` — cualquier rol distinto de `ADMIN` (también un `USER`, aunque sea el propietario del documento), documento inexistente o identificador inválido.
+- No es automático: cada reprocesamiento lo pide una persona y queda auditado; no hay reintentos ilimitados. En producción no está disponible mientras un ADMIN no pueda iniciar sesión (barrera MFA, ADR-002).
+
+**Fuera de esta rebanada:** OCR, limpieza de metadata de PDF (decisión pendiente), versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
 
 ## Esquemas
 

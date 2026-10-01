@@ -1,4 +1,5 @@
 import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { requestHandlerOptions } from "./s3-storage.js";
 import type { StorageEnv } from "./storage-env.js";
 
 /**
@@ -12,6 +13,7 @@ export async function ensureDevelopmentBucket(env: StorageEnv): Promise<"created
     region: env.STORAGE_REGION,
     endpoint: env.STORAGE_ENDPOINT,
     forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
+    requestHandler: requestHandlerOptions(),
     credentials:
       env.STORAGE_ACCESS_KEY_ID && env.STORAGE_SECRET_ACCESS_KEY
         ? { accessKeyId: env.STORAGE_ACCESS_KEY_ID, secretAccessKey: env.STORAGE_SECRET_ACCESS_KEY }

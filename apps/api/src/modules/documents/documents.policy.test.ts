@@ -42,4 +42,19 @@ describe("documents policy — first Documents slice (ADR-003)", () => {
       reason: "unknown_action",
     });
   });
+
+  it("lets only an ADMIN reprocess a document, whoever owns it", () => {
+    expect(can(actor("ADMIN"), "document:reprocess", { caseOwnerId: OTHER })).toEqual({
+      allowed: true,
+    });
+    for (const role of ["USER", "PROFESSIONAL", "SUPER_ADMIN"] as const) {
+      expect(can(actor(role), "document:reprocess", { caseOwnerId: SELF })).toEqual({
+        allowed: false,
+        reason: "role_not_allowed",
+      });
+    }
+    expect(
+      can(actor("ADMIN", "SUSPENDED"), "document:reprocess", { caseOwnerId: OTHER }).allowed,
+    ).toBe(false);
+  });
 });

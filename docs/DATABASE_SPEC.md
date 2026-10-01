@@ -1,7 +1,7 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.6 (recuperación del tratamiento y mínimo privilegio del worker, Fase 3)
-**Fecha:** 2026-09-28
+**Versión:** 0.7 (límite único, cuota y reprocesamiento de documentos, Fase 3)
+**Fecha:** 2026-10-01
 **Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28)
 **Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
 **Fuera de alcance:** `Infraction`, `Authority`, `DocumentVersion`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
@@ -242,7 +242,7 @@ Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse
 |---|---|---|
 | `id` | uuid | PK |
 | `case_id` | uuid | NOT NULL, FK `cases(id)` ON DELETE RESTRICT |
-| `file_name` | text | NOT NULL (nombre original, de 1 a 255 caracteres, sin rutas ni caracteres de control) |
+| `file_name` | text | NOT NULL (nombre original, de 1 a 255 caracteres, sin rutas ni caracteres de control; lo valida la API, no es una restricción de la base de datos) |
 | `file_type` | `DocumentFileType` | NOT NULL (determinado por el contenido del archivo, no por su extensión) |
 | `storage_key` | text | NOT NULL, UNIQUE (`cases/{case_id}/documents/{id}`: sin el nombre del archivo) |
 | `file_size` | integer | NOT NULL, CHECK `file_size > 0` (bytes) |
@@ -257,7 +257,8 @@ Documentos de un caso (`PROJECT_SPEC.md` s.16: "cada documento deberá asociarse
 | `sanitized_storage_key` | text | NULL, UNIQUE (copia derivada sin la metadata que retira la política; solo JPEG y PNG `CLEAN`) |
 
 - Índices: `(case_id, created_at)` y `(status)`.
-- El archivo se escribe en el almacenamiento antes que la fila; la fila, `document.uploaded` (con `case_id`) y el job `document.scan` se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla, se borra el objeto recién escrito; si también falla ese borrado, queda un objeto huérfano sin fila, que nadie puede descargar (se registra en el log).
+- El archivo se escribe en el almacenamiento antes que la fila; la fila, `document.uploaded` (con `case_id`) y el job `document.scan` se escriben en una transacción, con una sola hora de PostgreSQL. Si la transacción falla o no escribe nada (caso que dejó de ser un `DRAFT` propio, cuota excedida), se borra el objeto recién escrito; si guardar el objeto falla o caduca, también se intenta borrar (pudo llegar a escribirse) y no se escribe ninguna fila. Si un borrado falla (también cuando la escritura llegó al almacenamiento pero su respuesta se perdió), queda un objeto huérfano sin fila, que nadie puede descargar, y se registra el evento de log `storage.orphan_object` con su clave y su origen (`upload`, o `scan_failed_copy` para la copia derivada de un tratamiento fallido) para reconciliarlo más adelante; todavía no hay un recolector. Las peticiones al almacenamiento tienen timeouts (5 s para conectar, 30 s de inactividad, 45 s por petición) y los reintentos estándar del SDK (decisión del 2026-10-01).
+- **Límite y cuota** (decisión del 2026-10-01): 10 MiB por documento (`DOCUMENT_MAX_BYTES`) y 100 MiB por usuario (`DOCUMENT_QUOTA_BYTES`: suma de `file_size` de los documentos de sus casos, en cualquier estado, mientras existan). La cuota se comprueba y la fila se escribe en una transacción serializada por usuario (`pg_advisory_xact_lock`, espacio `DOCQ`), así que subidas simultáneas no pueden superarla. Valores técnicos provisionales. Mientras no exista la eliminación de documentos, cuenta todo documento almacenado, también `INFECTED` y `SCAN_FAILED`; cómo se libera la cuota queda pendiente de la futura funcionalidad de eliminación y retención, así que los 100 MiB no son todavía una cuota acumulativa permanente decidida por producto.
 - **El original nunca se modifica ni se borra**: queda privado e intacto en `storage_key`. La copia derivada es un objeto aparte (`{storage_key}.sanitized`).
 - Sin `DocumentVersion` todavía.
 
@@ -272,7 +273,7 @@ Lo hace el worker (`apps/worker`), fuera de la petición HTTP: análisis antivir
 | `SCANNING` | Un worker lo reclamó y lo está tratando. |
 | `CLEAN` | Sin amenazas y, si es JPEG o PNG, con su copia derivada guardada. Estado final; el único descargable. |
 | `INFECTED` | El antivirus detectó una amenaza. Estado final; nunca se descarga. El original se conserva privado. |
-| `SCAN_FAILED` | No se pudo completar el tratamiento tras agotar los intentos (antivirus caído, tiempo agotado, respuesta inesperada, objeto ausente o fallo al quitar la metadata). Estado final en esta rebanada; nunca se descarga. Volver a tratarlo es una operación futura, no expuesta todavía. |
+| `SCAN_FAILED` | No se pudo completar el tratamiento tras agotar los intentos (antivirus caído, tiempo agotado, respuesta inesperada, objeto ausente o fallo al quitar la metadata). Estado final del flujo normal; nunca se descarga. Solo sale de él por un reprocesamiento explícito pedido por un ADMIN (ver transiciones). |
 
 Transiciones, todas con una sentencia condicional dentro de una transacción:
 
@@ -287,17 +288,18 @@ Transiciones, todas con una sentencia condicional dentro de una transacción:
 | `SCANNING` | `SCAN_FAILED` | Error sin intentos pendientes (5 intentos). |
 | `SCANNING` | `PENDING_SCAN` | Barrido del worker: reclamo abandonado (más antiguo que el plazo de reclamo, 600 s) con intentos pendientes (`scan_attempts` < 5); estado y nuevo job en la misma transacción. |
 | `SCANNING` | `SCAN_FAILED` | Barrido del worker: reclamo abandonado sin intentos pendientes (`scan_attempts` ≥ 5), con `document.scan_failed` en la misma transacción. Un archivo que tumba al worker no se reintenta indefinidamente. |
+| `SCAN_FAILED` | `PENDING_SCAN` | Reprocesamiento explícito pedido por un ADMIN (`POST /api/admin/documents/:documentId/reprocess`, decisión del 2026-10-01): el worker, con el job `document.reprocess`, bloquea la fila y solo si sigue `SCAN_FAILED` la devuelve a `PENDING_SCAN` con `scan_attempts = 0` (una ronda nueva de 5 intentos), su job `document.scan` y `document.scan_reprocessed`, en una transacción. Nunca es automático; `INFECTED` nunca se reprocesa. Si un tratamiento que termina `SCAN_FAILED` dejó guardada la copia derivada, se borra. |
 
 - **Barrido de recuperación:** el worker lo ejecuta al arrancar y después cada `SCAN_SWEEP_INTERVAL_SECONDS` (60 s por defecto), sin depender de reinicios, de los reintentos de pg-boss (que se agotan) ni de su planificador (`schedule`, desactivado). Bloquea las filas con `FOR UPDATE SKIP LOCKED` y vuelve a comprobar la condición sobre la fila bloqueada, así que varios workers a la vez actúan una sola vez sobre cada documento, sin esperarse. Al quitar `scan_started_at`, el worker que tenía el reclamo ya no puede escribir un resultado.
 - **Recuperación, no transición del caso:** las vueltas a `PENDING_SCAN` (reintento y barrido) son recuperación de trabajos del tratamiento del documento; no cambian `scan_attempts` (lo suma el reclamo) ni el estado del `Case`.
 - **Idempotencia:** un job cuyo documento no está en `PENDING_SCAN` (ni es un `SCANNING` abandonado) no hace nada. Un job repetido o simultáneo nunca trata dos veces el mismo documento ni escribe dos resultados.
 - **Nunca `CLEAN` por defecto:** solo la respuesta exacta de "sin amenazas" de ClamAV produce `CLEAN`; cualquier otra respuesta, error o tiempo agotado es un error.
 - **Metadata** (decisión del 2026-09-28): JPEG: se recorre toda la estructura y se quitan los segmentos EXIF (con GPS) y XMP (`APP1`), IPTC (`APP13`) y comentarios (`COM`) donde aparezcan, también entre los barridos de un JPEG progresivo; los datos de imagen se copian byte a byte, sin recodificar, y se descarta lo que haya después de `EOI`. PNG: se quitan los bloques `eXIf`, `tEXt`, `zTXt` e `iTXt` (incluye XMP), se conservan los demás, que forman la imagen, y se descarta lo que haya después de `IEND`. **La política no retira toda la metadata posible:** se conservan, entre otros, en JPEG los segmentos `APP0` (JFIF, que puede llevar una miniatura), `APP2` (perfil de color ICC e índice MPF), `APP12` y los demás `APPn` de fabricantes; en PNG, `tIME` (fecha de modificación), `iCCP` (nombre del perfil de color) y los bloques auxiliares privados. Retirarlos sería ampliar la política, algo no decidido. El original nunca se sobrescribe: la copia derivada es otro objeto (`sanitized_storage_key`). **PDF: no se modifica**; su limpieza de metadata es una decisión pendiente. Si la limpieza falla, cuenta como error del tratamiento y el documento no se habilita.
-- **Auditoría** (sin actor: la hace el sistema), en la misma transacción que el cambio, con `case_id` y sin el nombre del archivo: `document.scan_clean`, `document.scan_infected` (con la firma en `new_value`) y `document.scan_failed`. El reclamo y los reintentos no se auditan.
+- **Auditoría** (sin actor: la hace el sistema), en la misma transacción que el cambio, con `case_id` y sin el nombre del archivo: `document.scan_clean`, `document.scan_infected` (con la firma en `new_value`), `document.scan_failed` y `document.scan_reprocessed` (con los intentos anteriores). La petición de reprocesamiento la audita la API (`document.reprocess_requested`, con el ADMIN como actor y su justificación). El reclamo y los reintentos no se auditan.
 
 #### Cola de trabajos (pg-boss)
 
-pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgboss`, con la cola `document.scan`.
+pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgboss`, con las colas `document.scan` y `document.reprocess` (sin particionar: sus trabajos están en `pgboss.job_common`).
 
 - **El esquema y la cola los crea el rol propietario** con una migración versionada (el SQL que exporta `getConstructionPlans` de esa versión, y `create_queue` sin particionar, que no ejecuta DDL). Actualizar pg-boss exige una migración con su cambio de esquema.
 - En tiempo de ejecución **ningún proceso de la aplicación ejecuta DDL**. Las dos instancias arrancan con `migrate: false` (solo comprueba la versión), `schedule: false` (sin planificador), `persistWarnings: false` y `reindex: false`:
@@ -328,6 +330,7 @@ users 1 ── * documents (uploaded_by)
 - `cases` (Fase 2): enums `case_type` y `case_status`, tablas `cases` y `case_status_history`, columna `audit_logs.case_id`, y sus permisos.
 - `documents` (Fase 3): enums `document_file_type`, `document_status` y `document_ocr_status`, tabla `documents` y sus permisos.
 - `document_scan_states` y `document_scan` (Fase 3, segunda rebanada): nuevos estados de `document_status`; columnas `scan_*` y `sanitized_storage_key`; esquema `pgboss` con la cola `document.scan`; permisos del rol de worker.
+- `document_reprocess_queue` (Fase 3, 2026-10-01): crea la cola `document.reprocess` (solo inserta su fila; sin DDL ni cambios de permisos).
 - `worker_pgboss_least_privilege` (Fase 3, cierre de la segunda rebanada): retira al rol del worker los permisos de `pgboss` que no usa con su configuración (`DELETE` en `job`; `INSERT` y `UPDATE` en `job_dependency`; `SELECT` en `schedule`, `subscription`, `bam` y `warning`; `UPDATE` de `cron_on`, `bam_on` y `reindex_on`).
 - Cada migración que cree una tabla concede en ella, explícitamente, los permisos que la aplicación necesite (y los añade al test `database.privileges.integration.test.ts`); sin ese `GRANT`, el rol de aplicación no puede usarla.
 - Toda modificación al esquema actualiza este documento en el mismo cambio.

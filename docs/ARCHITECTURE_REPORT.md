@@ -37,7 +37,7 @@
 | 11 | Estados del caso sin matriz de transiciones. | Máquina de estados explícita y con tests. | Matriz documentada en `DATABASE_SPEC.md` y capa de dominio con tests (Fase 2); transiciones habilitadas por fase; V1-V8 pendientes |
 | 12 | Tablas `Role`/`Permission` frente a 4 roles fijos. | Roles como enum y matriz en código, con camino de evolución. | **Aprobado (D3)** |
 | 13 | Autenticación sin definir; webhook y idempotencia ausentes en la API. | Ver ADR-002 y fases de pagos. | **Aprobado (D2)** |
-| 14 | Riesgo de abuso de costos en diagnóstico pre-pago. | Cuotas y rate limits por usuario. | Diferido a Fases 3 y 7 |
+| 14 | Riesgo de abuso de costos en diagnóstico pre-pago. | Cuotas y rate limits por usuario. | Fase 3: cuota de espacio de documentos implementada (100 MiB por usuario, 10 MiB por archivo); cuotas de OCR e IA pendientes de sus fases (P4, Fase 7) |
 | 15 | Datos personales sensibles: retención, borrado, consentimiento, transferencia internacional. | Validar con abogado colombiano. | **Decisión jurídica pendiente** |
 | 16 | Modelo operativo del servicio jurídico, autorización ante autoridades, T&C, reembolsos. | Validar con abogado colombiano. | **Decisión jurídica pendiente** |
 | 17 | Corpus jurídico sin responsable ni política de licencias. | Definir antes de la Fase 7. | Pendiente |

@@ -20,7 +20,7 @@ LegalTech platform for traffic and transport infractions in Colombia.
   layer, with no transition enabled. No questionnaire (its questions are not defined in the
   documents), pricing, payments or Legal AI yet; no MFA.
 - **Phase 3 (Documents), first slice:** a user uploads PDF, JPEG or PNG files (checked by content,
-  10 MB) to their own `DRAFT` cases, lists them and downloads them through short-lived presigned
+  10 MiB; 100 MiB per user) to their own `DRAFT` cases, lists them and downloads them through short-lived presigned
   URLs; files live in private S3-compatible storage behind `StorageProvider` (SeaweedFS in
   development; production provider and region pending, P3).
 - **Phase 3 (Documents), second slice:** every document goes through a security treatment in

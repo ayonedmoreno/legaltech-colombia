@@ -1,12 +1,32 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { buildContentSecurityPolicy, generateNonce } from "./config/csp";
+import { oversizedUploadError } from "./config/upload-guard";
 
 /**
- * Sets a fresh CSP nonce per page request. Next.js reads the nonce from the request's
+ * Pages: sets a fresh CSP nonce per request. Next.js reads the nonce from the request's
  * Content-Security-Policy header and applies it to the scripts it renders; the same policy is
  * returned to the browser.
+ *
+ * Document uploads (`POST /api/cases/:caseId/documents`): a declared size over the system's
+ * limit gets the API's 413 here instead of being forwarded (see upload-guard.ts). Every other
+ * upload continues, unchanged, to the API.
  */
 export function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    const requestId = crypto.randomUUID();
+    const error = oversizedUploadError(
+      request.method,
+      request.nextUrl.pathname,
+      request.headers.get("content-length"),
+      requestId,
+    );
+    if (!error) return NextResponse.next();
+    return NextResponse.json(error, {
+      status: 413,
+      headers: { "x-request-id": requestId, "cache-control": "no-store" },
+    });
+  }
+
   const nonce = generateNonce();
   const policy = buildContentSecurityPolicy(nonce, process.env.NODE_ENV === "development");
 
@@ -30,5 +50,7 @@ export const config = {
         { type: "header", key: "purpose", value: "prefetch" },
       ],
     },
+    // The one API route that receives files, for the size guard.
+    "/api/cases/:caseId/documents",
   ],
 };

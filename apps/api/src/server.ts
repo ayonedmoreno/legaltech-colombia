@@ -25,7 +25,6 @@ const documentsService = new DocumentsService({
   repository: new PrismaDocumentsRepository(prisma, new PgBossJobQueue(boss)),
   cases: casesRepository,
   storage: new S3StorageProvider(storageEnv),
-  maxBytes: env.DOCUMENT_MAX_BYTES,
   downloadUrlTtlSeconds: env.DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
 });
 const app = await buildApp({

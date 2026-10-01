@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { DOCUMENT_SCAN_QUEUE } from "@legaltech/contracts";
+import { DOCUMENT_REPROCESS_QUEUE, DOCUMENT_SCAN_QUEUE } from "@legaltech/contracts";
 import type { PrismaClient } from "@legaltech/database";
 import { ensureDevelopmentBucket, S3StorageProvider, type StorageEnv } from "@legaltech/storage";
 import { fromPrisma, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AntivirusError, type AntivirusProvider } from "./antivirus/antivirus.js";
 import { ClamAvProvider } from "./antivirus/clamav.js";
-import { startPgBossForWorker, sweepUntreatedDocuments, workDocumentScans } from "./queue.js";
+import {
+  startPgBossForWorker,
+  sweepUntreatedDocuments,
+  workDocumentReprocesses,
+  workDocumentScans,
+} from "./queue.js";
 import { PrismaScanRepository } from "./scan/scan.repository.js";
 import {
   clients,
@@ -90,6 +95,7 @@ describe.skipIf(!hasPipeline)(
         () => {},
         { pollingIntervalSeconds: 0.5 },
       );
+      await workDocumentReprocesses(workerBoss, worker, () => {}, { pollingIntervalSeconds: 0.5 });
     }, 60_000);
 
     afterAll(async () => {
@@ -189,6 +195,44 @@ describe.skipIf(!hasPipeline)(
       });
       expect((await events(document.id)).map((e) => e.action)).toEqual(["document.scan_failed"]);
     }, 90_000);
+
+    it("treats a SCAN_FAILED document again after an ADMIN's reprocessing, up to CLEAN", async () => {
+      const pdf = Buffer.from("%PDF-1.7\nreprocesado\n");
+      // Its object is missing at first (as during a storage outage): every attempt fails.
+      const document = await seedDocument(app, { fileType: "PDF", fileSize: pdf.length });
+      await app.$transaction(async (tx) => {
+        await apiBoss.send(
+          DOCUMENT_SCAN_QUEUE,
+          { documentId: document.id },
+          { db: fromPrisma(tx), retryDelay: 1, retryBackoff: false },
+        );
+      });
+      expect((await finalState(document.id)).status).toBe("SCAN_FAILED");
+
+      // The storage is back; an ADMIN asks for reprocessing (the API enqueues it, as the app role).
+      await storage.putObject({ key: document.storageKey, body: pdf, contentType: "x" });
+      await app.$transaction(async (tx) => {
+        await apiBoss.send(
+          DOCUMENT_REPROCESS_QUEUE,
+          { documentId: document.id },
+          { db: fromPrisma(tx) },
+        );
+      });
+
+      for (let i = 0; i < 120; i++) {
+        const current = await app.document.findUniqueOrThrow({ where: { id: document.id } });
+        if (current.status === "CLEAN") break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      const done = await app.document.findUniqueOrThrow({ where: { id: document.id } });
+      expect(done.status).toBe("CLEAN");
+      expect(done.scanAttempts).toBe(1);
+      expect((await events(document.id)).map((e) => e.action)).toEqual([
+        "document.scan_failed",
+        "document.scan_reprocessed",
+        "document.scan_clean",
+      ]);
+    }, 120_000);
 
     it("ignores a duplicate job for a document already treated", async () => {
       const document = await upload("PDF", Buffer.from("%PDF-1.7\nduplicado\n"));

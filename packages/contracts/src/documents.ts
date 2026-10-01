@@ -70,9 +70,46 @@ export const documentFileNameSchema = z
     message: "must not contain path separators or control characters",
   });
 
+const MIB = 1024 * 1024;
+
+/**
+ * The one upload limit of the system, in bytes (API_SPEC.md; SECURITY_SPEC.md §11): 10 MiB, a
+ * provisional technical value. The API refuses anything larger (413), the web checks it before
+ * sending, and the web's /api proxy buffers a little more so that the API always decides.
+ */
+export const DOCUMENT_MAX_BYTES = 10 * MIB;
+
+/**
+ * Space a user's documents may take, in bytes (sum of the original files' sizes): 100 MiB, a
+ * provisional technical value. Every stored document counts while it exists, whatever its status.
+ */
+export const DOCUMENT_QUOTA_BYTES = 100 * MIB;
+
 /** The pg-boss queue of the document security treatment (API enqueues, worker consumes). */
 export const DOCUMENT_SCAN_QUEUE = "document.scan";
 
 /** Payload of a `document.scan` job: only the document's id, never its name or content. */
 export const documentScanJobSchema = z.object({ documentId: z.string().uuid() }).strict();
 export type DocumentScanJob = z.infer<typeof documentScanJobSchema>;
+
+/**
+ * The pg-boss queue of an explicit reprocessing (API enqueues for an ADMIN, worker moves the
+ * document `SCAN_FAILED` → `PENDING_SCAN`).
+ */
+export const DOCUMENT_REPROCESS_QUEUE = "document.reprocess";
+
+/** Payload of a `document.reprocess` job: only the document's id. */
+export const documentReprocessJobSchema = z.object({ documentId: z.string().uuid() }).strict();
+export type DocumentReprocessJob = z.infer<typeof documentReprocessJobSchema>;
+
+/** Path parameters of `POST /api/admin/documents/:documentId/reprocess`. */
+export const documentIdParamsSchema = z.object({ documentId: z.string().uuid() }).strict();
+
+/**
+ * Body of `POST /api/admin/documents/:documentId/reprocess`: the justification of an
+ * administrative action on another user's document (ADR-003), recorded in the audit log.
+ */
+export const reprocessDocumentRequestSchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
+  .strict();
+export type ReprocessDocumentRequest = z.infer<typeof reprocessDocumentRequestSchema>;

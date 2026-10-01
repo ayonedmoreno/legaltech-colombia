@@ -1,12 +1,17 @@
 import type { PrismaClient } from "@legaltech/database";
 import { fromPrisma } from "pg-boss";
 import type { JobQueue } from "../../jobs/job-queue.js";
-import { auditLogData } from "../auth/auth.repository.js";
+import { auditLogData, loginLockKey } from "../auth/auth.repository.js";
 import type {
   CreateDocumentInput,
+  CreateDocumentResult,
   DocumentRecord,
   DocumentsRepository,
+  RequestReprocessInput,
 } from "./documents.types.js";
+
+/** Advisory-lock namespace of the per-user document quota: "DOCQ". */
+export const DOCUMENT_QUOTA_LOCK_NAMESPACE = 0x444f4351;
 
 /** Prisma-backed implementation of DocumentsRepository. */
 export class PrismaDocumentsRepository implements DocumentsRepository {
@@ -15,14 +20,27 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
     private readonly jobs: JobQueue,
   ) {}
 
-  async createDocument(input: CreateDocumentInput): Promise<DocumentRecord | null> {
+  async createDocument(input: CreateDocumentInput): Promise<CreateDocumentResult> {
     return this.prisma.$transaction(async (tx) => {
+      // One upload at a time per user while the quota is checked and the row written, so two
+      // concurrent uploads cannot both fit in the space left for one. Released at commit.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${DOCUMENT_QUOTA_LOCK_NAMESPACE}::int, ${loginLockKey(input.userId.replace(/-/g, ""))}::int)`;
+
       // The case must still be the user's and in DRAFT when the document is recorded.
       const owned = await tx.case.findFirst({
         where: { id: input.caseId, userId: input.userId, status: "DRAFT" },
         select: { id: true },
       });
-      if (!owned) return null;
+      if (!owned) return { kind: "case_not_writable" };
+
+      // Read after the lock is held: every upload of this user committed before is counted.
+      const [usage] = await tx.$queryRaw<Array<{ used: bigint }>>`
+        SELECT coalesce(sum(d.file_size), 0)::bigint AS used
+        FROM documents d JOIN cases c ON c.id = d.case_id
+        WHERE c.user_id = ${input.userId}::uuid`;
+      if (Number(usage!.used) + input.fileSize > input.quotaBytes) {
+        return { kind: "quota_exceeded" };
+      }
 
       // One PostgreSQL instant for the document and its event (as for cases).
       const [row] = await tx.$queryRaw<Array<{ now: Date }>>`SELECT clock_timestamp() AS now`;
@@ -44,8 +62,16 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
       });
       // The security treatment is queued with the row: a document never exists without its job.
       await this.jobs.enqueueDocumentScan(created.id, fromPrisma(tx));
-      return created;
+      return { kind: "created", document: created };
     });
+  }
+
+  async usedBytes(userId: string): Promise<number> {
+    const [usage] = await this.prisma.$queryRaw<Array<{ used: bigint }>>`
+      SELECT coalesce(sum(d.file_size), 0)::bigint AS used
+      FROM documents d JOIN cases c ON c.id = d.case_id
+      WHERE c.user_id = ${userId}::uuid`;
+    return Number(usage!.used);
   }
 
   async listOwnCaseDocuments(caseId: string, userId: string): Promise<DocumentRecord[]> {
@@ -61,5 +87,19 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
     userId: string,
   ): Promise<DocumentRecord | null> {
     return this.prisma.document.findFirst({ where: { id: documentId, caseId, case: { userId } } });
+  }
+
+  async findDocumentForAdministration(documentId: string): Promise<DocumentRecord | null> {
+    return this.prisma.document.findUnique({ where: { id: documentId } });
+  }
+
+  async requestReprocess(input: RequestReprocessInput): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw<Array<{ now: Date }>>`SELECT clock_timestamp() AS now`;
+      await tx.auditLog.create({
+        data: { ...auditLogData(input.audit), caseId: input.caseId, occurredAt: row!.now },
+      });
+      await this.jobs.enqueueDocumentReprocess(input.documentId, fromPrisma(tx));
+    });
   }
 }

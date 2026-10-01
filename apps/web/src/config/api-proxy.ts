@@ -1,3 +1,5 @@
+import { DOCUMENT_MAX_BYTES } from "@legaltech/contracts";
+
 /**
  * Web → API proxy (ADR-002): the browser only ever talks to the web origin, and Next.js
  * forwards `/api/*` to the Fastify API. Session and CSRF cookies therefore stay first-party
@@ -27,6 +29,15 @@ export function resolveApiInternalUrl(env: Readonly<Record<string, string | unde
   }
   return value;
 }
+
+/**
+ * How much of a request body the /api proxy buffers (Next.js `middlewareClientMaxBodySize`). A
+ * larger body is cut: only this much is forwarded, with its original Content-Length. It is kept a
+ * little above the system's upload limit (DOCUMENT_MAX_BYTES), so every oversized upload still
+ * carries a length over the limit when it reaches the API, which refuses it with its 413 instead
+ * of the cut connection becoming a 500 at the proxy.
+ */
+export const PROXY_BODY_BUFFER_BYTES = DOCUMENT_MAX_BYTES + 1024 * 1024;
 
 /** Rewrites every `/api/*` request, unchanged, to the same path on the API. */
 export function apiProxyRewrites(apiInternalUrl: string) {

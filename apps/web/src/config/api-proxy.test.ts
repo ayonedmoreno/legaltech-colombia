@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_API_INTERNAL_URL, apiProxyRewrites, resolveApiInternalUrl } from "./api-proxy";
+import { DOCUMENT_MAX_BYTES } from "@legaltech/contracts";
+import {
+  DEFAULT_API_INTERNAL_URL,
+  PROXY_BODY_BUFFER_BYTES,
+  apiProxyRewrites,
+  resolveApiInternalUrl,
+} from "./api-proxy";
 
 describe("resolveApiInternalUrl", () => {
   it("defaults to the local API when unset or empty", () => {
@@ -26,5 +32,13 @@ describe("apiProxyRewrites", () => {
     expect(apiProxyRewrites("http://127.0.0.1:4000")).toEqual([
       { source: "/api/:path*", destination: "http://127.0.0.1:4000/api/:path*" },
     ]);
+  });
+});
+
+describe("PROXY_BODY_BUFFER_BYTES", () => {
+  it("stays above the one upload limit, so the API always answers an oversized upload", () => {
+    expect(DOCUMENT_MAX_BYTES).toBe(10 * 1024 * 1024);
+    expect(PROXY_BODY_BUFFER_BYTES).toBeGreaterThan(DOCUMENT_MAX_BYTES);
+    expect(PROXY_BODY_BUFFER_BYTES).toBe(11 * 1024 * 1024);
   });
 });

@@ -9,6 +9,8 @@ export interface ScanDocumentDeps {
   antivirus: AntivirusProvider;
   maxAttempts: number;
   leaseSeconds: number;
+  /** Where operational events go (an object left in storage without a reference). */
+  log?: (event: Record<string, unknown>) => void;
 }
 
 export type ScanOutcome =
@@ -56,11 +58,35 @@ export async function scanDocument(
     return (await deps.repository.markClean(claim, sanitizedKey)) ? "clean" : "lost";
   } catch (error) {
     if (claim.attempts >= deps.maxAttempts) {
-      await deps.repository.markFailed(claim);
+      if (await deps.repository.markFailed(claim)) await removeSanitizedCopy(deps, claim);
       return "failed";
     }
     await deps.repository.release(claim);
     throw error;
+  }
+}
+
+/**
+ * A failed treatment may have stored the copy without metadata before the database write that
+ * would have used it failed. The document is SCAN_FAILED now (nobody else treats it), so the
+ * unreferenced copy is removed; a failure to remove it is not an error of the treatment.
+ */
+async function removeSanitizedCopy(deps: ScanDocumentDeps, claim: ScanClaim): Promise<void> {
+  if (claim.fileType === "PDF") return;
+  const storageKey = sanitizedKeyOf(claim.storageKey);
+  try {
+    await deps.storage.deleteObject(storageKey);
+  } catch (error) {
+    // Left in place: never served (the document is not CLEAN) and a reprocessing overwrites it,
+    // but logged with its key for a later reconciliation.
+    deps.log?.({
+      level: "error",
+      event: "storage.orphan_object",
+      origin: "scan_failed_copy",
+      document: claim.documentId,
+      storageKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

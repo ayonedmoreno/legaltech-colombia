@@ -38,7 +38,7 @@ export interface BuildTestAppOptions {
   /** A preconfigured fake documents repository (built over the cases one if omitted). */
   documentsRepository?: FakeDocumentsRepository;
   storage?: MemoryStorageProvider;
-  /** Upload limit in bytes; the default of the environment otherwise. */
+  /** A smaller upload limit in bytes (DOCUMENT_MAX_BYTES, 10 MiB, otherwise). */
   documentMaxBytes?: number;
   /** Trusted proxy addresses (API_TRUST_PROXY); none by default, as in the real default. */
   trustProxy?: string[];
@@ -74,7 +74,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
       repository: documentsRepository,
       cases: casesRepository,
       storage,
-      maxBytes: options.documentMaxBytes ?? TEST_ENV.DOCUMENT_MAX_BYTES,
+      maxBytes: options.documentMaxBytes,
       downloadUrlTtlSeconds: TEST_ENV.DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
       clock: options.clock,
     }),

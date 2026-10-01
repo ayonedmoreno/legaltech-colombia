@@ -15,6 +15,34 @@ import {
 } from "./storage.types.js";
 
 /**
+ * Timeouts of every request to the storage (decision of 2026-10-01): without them a storage that
+ * stops answering would keep a request waiting forever. The SDK keeps its standard retries (3
+ * attempts with backoff) for errors, timeouts included, so an operation gives up after at most
+ * three timed-out attempts.
+ */
+export const STORAGE_TIMEOUTS = {
+  /** To open the TCP connection. */
+  connectionTimeoutMs: 5_000,
+  /** Of inactivity on an open connection (no byte sent or received). */
+  socketTimeoutMs: 30_000,
+  /** Of one whole request, from sending it to its complete answer. */
+  requestTimeoutMs: 45_000,
+} as const;
+
+export type StorageTimeouts = { [K in keyof typeof STORAGE_TIMEOUTS]: number };
+
+/** The SDK request handler options for these timeouts (a timed-out request is an error). */
+export function requestHandlerOptions(timeouts: StorageTimeouts = STORAGE_TIMEOUTS) {
+  return {
+    connectionTimeout: timeouts.connectionTimeoutMs,
+    socketTimeout: timeouts.socketTimeoutMs,
+    requestTimeout: timeouts.requestTimeoutMs,
+    // Without it the SDK only logs a warning when requestTimeout is exceeded.
+    throwOnRequestTimeout: true,
+  };
+}
+
+/**
  * StorageProvider over any S3-compatible service: SeaweedFS in development and CI, the
  * production provider once P3 is decided (only the configuration changes). The bucket is
  * private: objects are only reachable through presigned URLs issued by the API.
@@ -25,9 +53,11 @@ export class S3StorageProvider implements StorageProvider {
   private readonly presignClient: S3Client;
   private readonly bucket: string;
 
-  constructor(env: StorageEnv) {
+  /** `timeouts` only for tests; production always uses STORAGE_TIMEOUTS. */
+  constructor(env: StorageEnv, options: { timeouts?: StorageTimeouts } = {}) {
     const base: S3ClientConfig = {
       region: env.STORAGE_REGION,
+      requestHandler: requestHandlerOptions(options.timeouts),
       forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
       credentials:
         env.STORAGE_ACCESS_KEY_ID && env.STORAGE_SECRET_ACCESS_KEY

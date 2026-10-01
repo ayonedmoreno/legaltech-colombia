@@ -193,6 +193,44 @@ describe("document.scan job", () => {
     });
   });
 
+  it("removes a stored copy that a failed last attempt left without its database write", async () => {
+    const key = addDocument("d1", "JPEG", JPEG);
+    // The copy is stored, then recording CLEAN fails (the database is unavailable).
+    repository.markClean = () => Promise.reject(new Error("database unavailable"));
+
+    expect(await scanDocument(deps(new ScriptedAntivirus([CLEAN]), { maxAttempts: 1 }), "d1")).toBe(
+      "failed",
+    );
+
+    expect(repository.documents.get("d1")!.status).toBe("SCAN_FAILED");
+    expect(storage.objects.has(sanitizedKeyOf(key))).toBe(false);
+    expect(storage.objects.has(key)).toBe(true); // the original is never touched
+  });
+
+  it("logs the copy as an orphan, with its key, when it cannot be removed either", async () => {
+    const key = addDocument("d1", "JPEG", JPEG);
+    repository.markClean = () => Promise.reject(new Error("database unavailable"));
+    storage.deleteObject = () => Promise.reject(new Error("storage unavailable"));
+    const events: Array<Record<string, unknown>> = [];
+
+    expect(
+      await scanDocument(
+        deps(new ScriptedAntivirus([CLEAN]), { maxAttempts: 1, log: (e) => events.push(e) }),
+        "d1",
+      ),
+    ).toBe("failed");
+
+    expect(repository.documents.get("d1")!.status).toBe("SCAN_FAILED");
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: "storage.orphan_object",
+        origin: "scan_failed_copy",
+        document: "d1",
+        storageKey: sanitizedKeyOf(key),
+      }),
+    ]);
+  });
+
   it("is idempotent: a job for a document already treated does nothing", async () => {
     addDocument("d1", "PDF", PDF);
     const antivirus = new ScriptedAntivirus([CLEAN]);

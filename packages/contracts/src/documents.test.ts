@@ -3,8 +3,12 @@ import {
   apiErrorSchema,
   documentFileNameSchema,
   documentParamsSchema,
+  DOCUMENT_MAX_BYTES,
+  DOCUMENT_QUOTA_BYTES,
+  documentReprocessJobSchema,
   documentScanJobSchema,
   documentStatusSchema,
+  reprocessDocumentRequestSchema,
 } from "./index.js";
 
 describe("document contracts", () => {
@@ -56,5 +60,32 @@ describe("document contracts", () => {
     expect(documentScanJobSchema.safeParse({ documentId: id, fileName: "a.pdf" }).success).toBe(
       false,
     );
+  });
+
+  it("fixes the upload limit at 10 MiB and the per-user quota at 100 MiB", () => {
+    expect(DOCUMENT_MAX_BYTES).toBe(10 * 1024 * 1024);
+    expect(DOCUMENT_QUOTA_BYTES).toBe(100 * 1024 * 1024);
+  });
+
+  it("accepts a document.reprocess job with a document id only", () => {
+    const id = "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11";
+    expect(documentReprocessJobSchema.safeParse({ documentId: id }).success).toBe(true);
+    expect(documentReprocessJobSchema.safeParse({ documentId: id, force: true }).success).toBe(
+      false,
+    );
+  });
+
+  it("requires a justification (1 to 500 characters) to reprocess a document, and nothing else", () => {
+    expect(
+      reprocessDocumentRequestSchema.safeParse({ reason: "ClamAV caído el 2026-10-01" }).success,
+    ).toBe(true);
+    expect(reprocessDocumentRequestSchema.safeParse({ reason: "   " }).success).toBe(false);
+    expect(reprocessDocumentRequestSchema.safeParse({}).success).toBe(false);
+    expect(reprocessDocumentRequestSchema.safeParse({ reason: "x".repeat(501) }).success).toBe(
+      false,
+    );
+    expect(
+      reprocessDocumentRequestSchema.safeParse({ reason: "ok", status: "CLEAN" }).success,
+    ).toBe(false);
   });
 });

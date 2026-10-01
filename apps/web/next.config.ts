@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
-import { apiProxyRewrites, resolveApiInternalUrl } from "./src/config/api-proxy";
+import {
+  apiProxyRewrites,
+  PROXY_BODY_BUFFER_BYTES,
+  resolveApiInternalUrl,
+} from "./src/config/api-proxy";
 
 // Base security headers. The Content-Security-Policy (per-request nonce) is set by
 // src/middleware.ts; HSTS is set by the TLS-terminating reverse proxy (see SECURITY_SPEC.md).
@@ -15,10 +19,10 @@ const apiInternalUrl = resolveApiInternalUrl(process.env);
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   experimental: {
-    // The /api/* proxy buffers request bodies up to this size and silently truncates the rest.
-    // It must stay above the API's document limit (DOCUMENT_MAX_BYTES, 10 MB by default), so
-    // the API, not the proxy, always decides: a larger file reaches it whole and gets its 413.
-    middlewareClientMaxBodySize: "12mb",
+    // The /api/* proxy's request body buffer: derived from the one upload limit (11 MiB for
+    // 10 MiB), so the API, not the proxy, always decides and every oversized file gets its 413
+    // (see PROXY_BODY_BUFFER_BYTES).
+    middlewareClientMaxBodySize: PROXY_BODY_BUFFER_BYTES,
   },
   poweredByHeader: false,
   async headers() {

@@ -1,4 +1,9 @@
-import { DOCUMENT_SCAN_QUEUE, documentScanJobSchema } from "@legaltech/contracts";
+import {
+  DOCUMENT_REPROCESS_QUEUE,
+  DOCUMENT_SCAN_QUEUE,
+  documentReprocessJobSchema,
+  documentScanJobSchema,
+} from "@legaltech/contracts";
 import type { PrismaClient } from "@legaltech/database";
 import { fromPrisma, PgBoss } from "pg-boss";
 import { scanDocument, type ScanDocumentDeps } from "./scan/scan-document.js";
@@ -155,4 +160,67 @@ export function startPeriodicSweep(
       });
   }, intervalMs);
   return () => clearInterval(timer);
+}
+
+/**
+ * An ADMIN's explicit reprocessing (decision of 2026-10-01; DATABASE_SPEC.md): in one
+ * transaction, a document that is still `SCAN_FAILED` goes back to `PENDING_SCAN` with a new
+ * round of attempts, a `document.scan` job and its `document.scan_reprocessed` event. Any other
+ * status — `INFECTED` included, already reprocessed, unknown — changes nothing. The row is locked
+ * and its status checked again on the locked row, so concurrent reprocessings act once.
+ */
+export async function reprocessDocument(
+  prisma: PrismaClient,
+  boss: PgBoss,
+  documentId: string,
+): Promise<"reprocessed" | "skipped"> {
+  return prisma.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<
+      Array<{ id: string; case_id: string; previous_attempts: number; now: Date }>
+    >`
+      WITH target AS (
+        SELECT id, case_id, scan_attempts FROM documents
+        WHERE id = ${documentId}::uuid AND status = 'SCAN_FAILED'
+        FOR UPDATE)
+      UPDATE documents d
+      SET status = 'PENDING_SCAN', scan_attempts = 0, scan_started_at = NULL, scanned_at = NULL,
+          scan_signature = NULL, sanitized_storage_key = NULL
+      FROM target t
+      WHERE d.id = t.id
+      RETURNING d.id, t.case_id, t.scan_attempts AS previous_attempts, clock_timestamp() AS now`;
+    if (!row) return "skipped";
+
+    const jobId = await boss.send(
+      DOCUMENT_SCAN_QUEUE,
+      { documentId: row.id },
+      { db: fromPrisma(tx) },
+    );
+    if (!jobId) throw new Error("a document.scan job was not enqueued");
+    // The system acts (the ADMIN's request was audited by the API). Never the file name.
+    await tx.$executeRaw`
+      INSERT INTO audit_logs (action, entity_type, entity_id, case_id, new_value, occurred_at)
+      VALUES ('document.scan_reprocessed', 'Document', ${row.id}, ${row.case_id}::uuid,
+              ${JSON.stringify({ status: "PENDING_SCAN", previousAttempts: row.previous_attempts })}::jsonb,
+              ${row.now})`;
+    return "reprocessed";
+  });
+}
+
+/** Registers the document.reprocess handler. A payload that is not a document id fails for good. */
+export async function workDocumentReprocesses(
+  boss: PgBoss,
+  prisma: PrismaClient,
+  log: (event: Record<string, unknown>) => void,
+  options: { pollingIntervalSeconds?: number } = {},
+): Promise<void> {
+  await boss.work(
+    DOCUMENT_REPROCESS_QUEUE,
+    { batchSize: 1, pollingIntervalSeconds: options.pollingIntervalSeconds ?? 2 },
+    async ([job]) => {
+      const payload = documentReprocessJobSchema.safeParse(job!.data);
+      if (!payload.success) throw new Error("invalid document.reprocess payload");
+      const outcome = await reprocessDocument(prisma, boss, payload.data.documentId);
+      log({ job: job!.id, document: payload.data.documentId, reprocess: outcome });
+    },
+  );
 }

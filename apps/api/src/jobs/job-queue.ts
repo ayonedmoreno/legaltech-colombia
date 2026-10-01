@@ -1,4 +1,9 @@
-import { DOCUMENT_SCAN_QUEUE, type DocumentScanJob } from "@legaltech/contracts";
+import {
+  DOCUMENT_REPROCESS_QUEUE,
+  DOCUMENT_SCAN_QUEUE,
+  type DocumentReprocessJob,
+  type DocumentScanJob,
+} from "@legaltech/contracts";
 import { PgBoss } from "pg-boss";
 
 /**
@@ -16,6 +21,8 @@ export interface TransactionSql {
 export interface JobQueue {
   /** Enqueues the security treatment of a document inside the caller's transaction. */
   enqueueDocumentScan(documentId: string, tx: TransactionSql): Promise<void>;
+  /** Enqueues an ADMIN's reprocessing of a SCAN_FAILED document inside the caller's transaction. */
+  enqueueDocumentReprocess(documentId: string, tx: TransactionSql): Promise<void>;
 }
 
 /**
@@ -43,5 +50,11 @@ export class PgBossJobQueue implements JobQueue {
     const job: DocumentScanJob = { documentId };
     const id = await this.boss.send(DOCUMENT_SCAN_QUEUE, job, { db: tx });
     if (!id) throw new Error("the document.scan job was not enqueued");
+  }
+
+  async enqueueDocumentReprocess(documentId: string, tx: TransactionSql): Promise<void> {
+    const job: DocumentReprocessJob = { documentId };
+    const id = await this.boss.send(DOCUMENT_REPROCESS_QUEUE, job, { db: tx });
+    if (!id) throw new Error("the document.reprocess job was not enqueued");
   }
 }

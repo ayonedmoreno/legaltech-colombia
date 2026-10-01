@@ -1049,10 +1049,10 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
           // These tests never upload documents: a queue that refuses to be used.
           repository: new PrismaDocumentsRepository(prisma, {
             enqueueDocumentScan: () => Promise.reject(new Error("not used by these tests")),
+            enqueueDocumentReprocess: () => Promise.reject(new Error("not used by these tests")),
           }),
           cases: new PrismaCasesRepository(prisma),
           storage: new MemoryStorageProvider(),
-          maxBytes: TEST_ENV.DOCUMENT_MAX_BYTES,
           downloadUrlTtlSeconds: TEST_ENV.DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
         }),
       });

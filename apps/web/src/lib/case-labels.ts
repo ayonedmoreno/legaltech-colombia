@@ -90,8 +90,11 @@ export function isDownloadable(status: DocumentStatus): boolean {
   return status === "CLEAN";
 }
 
-/** The upload limit shown to the user; the API enforces its own (DOCUMENT_MAX_BYTES). */
-export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * The upload limit: the system's one value (@legaltech/contracts, 10 MiB). The browser checks it
+ * only to spare a useless upload; the API enforces it.
+ */
+export { DOCUMENT_MAX_BYTES } from "@legaltech/contracts";
 
 /** A file size for people: bytes, KB or MB, with a comma decimal (Colombia). */
 export function formatFileSize(bytes: number): string {

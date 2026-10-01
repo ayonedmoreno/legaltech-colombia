@@ -6,6 +6,7 @@ import {
   startPeriodicSweep,
   startPgBossForWorker,
   sweepUntreatedDocuments,
+  workDocumentReprocesses,
   workDocumentScans,
 } from "./queue.js";
 import { PrismaScanRepository } from "./scan/scan.repository.js";
@@ -52,9 +53,13 @@ await workDocumentScans(
     }),
     maxAttempts: env.SCAN_MAX_ATTEMPTS,
     leaseSeconds: env.SCAN_LEASE_SECONDS,
+    log,
   },
   (event) => log({ level: "info", ...event }),
 );
+
+// An ADMIN's explicit reprocessing of a SCAN_FAILED document (requested through the API).
+await workDocumentReprocesses(boss, prisma, (event) => log({ level: "info", ...event }));
 
 async function shutdown(signal: string): Promise<void> {
   log({ level: "info", message: "shutting down", signal });

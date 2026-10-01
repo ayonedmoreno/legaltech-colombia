@@ -26,7 +26,7 @@ describe("FakeDocumentsRepository scope", () => {
     const own = await cases.createCase({ userId: owner, type: "OTHER", audit });
     const other = await cases.createCase({ userId: owner, type: "OTHER", audit });
     const id = randomUUID();
-    const document = (await repository.createDocument({
+    const result = await repository.createDocument({
       id,
       caseId: own.id,
       userId: owner,
@@ -34,8 +34,11 @@ describe("FakeDocumentsRepository scope", () => {
       fileType: "PDF",
       storageKey: `cases/${own.id}/documents/${id}`,
       fileSize: 10,
+      quotaBytes: 100,
       audit: (record: DocumentRecord) => ({ ...audit(record), action: "document.uploaded" }),
-    }))!;
+    });
+    if (result.kind !== "created") throw new Error(result.kind);
+    const document = result.document;
     return { repository, owner, own, other, document };
   }
 
@@ -52,5 +55,33 @@ describe("FakeDocumentsRepository scope", () => {
 
     expect(await repository.listOwnCaseDocuments(own.id, owner)).toHaveLength(1);
     expect(await repository.listOwnCaseDocuments(own.id, randomUUID())).toEqual([]);
+  });
+
+  it("keeps the quota like PostgreSQL: the user's documents in every case count", async () => {
+    const { repository, owner, other } = await setUp();
+    const make = (caseId: string, fileSize: number) =>
+      repository.createDocument({
+        id: randomUUID(),
+        caseId,
+        userId: owner,
+        fileName: "b.pdf",
+        fileType: "PDF",
+        storageKey: `cases/${caseId}/documents/${randomUUID()}`,
+        fileSize,
+        quotaBytes: 100,
+        audit: (record: DocumentRecord) => ({
+          actorUserId: owner,
+          actorRole: "USER" as const,
+          action: "document.uploaded",
+          entityId: record.id,
+          requestId: null,
+          ip: null,
+          userAgent: null,
+        }),
+      });
+
+    expect((await make(other.id, 90)).kind).toBe("created");
+    expect((await make(other.id, 1)).kind).toBe("quota_exceeded");
+    expect(await repository.usedBytes(owner)).toBe(100);
   });
 });

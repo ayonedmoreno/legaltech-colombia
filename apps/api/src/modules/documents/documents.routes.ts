@@ -1,4 +1,5 @@
 import type {
+  AcceptedResponse,
   DocumentDownloadResponse,
   DocumentResponse,
   DocumentsResponse,
@@ -6,11 +7,18 @@ import type {
 import {
   caseParamsSchema,
   documentFileNameSchema,
+  documentIdParamsSchema,
   documentParamsSchema,
+  reprocessDocumentRequestSchema,
 } from "@legaltech/contracts";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { HttpError } from "../../common/http-error.js";
-import { requestContext, requireCsrf, requireCurrentUser } from "../auth/auth.request.js";
+import {
+  requestContext,
+  requireCsrf,
+  requireCurrentUser,
+  validationError,
+} from "../auth/auth.request.js";
 import type { AuthService, CurrentUserResult } from "../auth/auth.service.js";
 import type { DocumentsService } from "./documents.service.js";
 
@@ -117,5 +125,36 @@ export const documentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = async (
     );
     // A capability URL: never cached.
     return reply.header("cache-control", "no-store").send(body);
+  });
+};
+
+/**
+ * `/api/admin/documents` (API_SPEC.md): administrative actions on documents. Only
+ * `POST /:documentId/reprocess` for now: an ADMIN asks, with a justification, for a document
+ * whose security treatment failed (`SCAN_FAILED`) to be treated again. Session and CSRF first;
+ * then the policy, so any other role gets a 404 before its request is read.
+ */
+export const adminDocumentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = async (
+  app,
+  { authService, documentsService, appOrigin },
+) => {
+  app.post("/:documentId/reprocess", async (request, reply) => {
+    const current = await requireCurrentUser(request, authService);
+    requireCsrf(request, authService, current.session, appOrigin);
+    documentsService.assertCanReprocess(current);
+
+    const params = documentIdParamsSchema.safeParse(request.params);
+    if (!params.success) throw notFound();
+    const body = reprocessDocumentRequestSchema.safeParse(request.body);
+    if (!body.success) throw validationError(body.error);
+
+    await documentsService.requestReprocess(
+      current,
+      params.data.documentId,
+      body.data.reason,
+      requestContext(request),
+    );
+    const accepted: AcceptedResponse = { status: "accepted" };
+    return reply.code(202).send(accepted);
   });
 };
