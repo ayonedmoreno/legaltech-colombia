@@ -120,7 +120,10 @@ Futuro 🔴: OCR/extracción, pricing-engine, legal-engine, IA/RAG (pgvector), p
 
 🔴 **Pendiente o no definido** (solo enumerado; no son requisitos ni alcance de ninguna rebanada)
 
-- **Fase 3:** OCR y extracción revisable (P4), metadata de PDF (P7), ClamAV de producción.
+- **Fase 3:**
+  - OCR: diseño aprobado el 2026-10-01 (`ARCHITECTURE_REPORT.md` §5, DEC-20), no implementado; depende de P4;
+  - metadata de PDF (P7), ClamAV de producción.
+- La extracción de entidades queda fuera de la Fase 3 (OCR-A1).
 - **Producción:** nube y región (P3), MFA, envío real de email.
 - **Casos:** cuestionario dinámico (sin contenido aprobado); transiciones T1–T10 (deshabilitadas) y decisiones V1–V8.
 - **Fases futuras:** pricing, pagos, IA/RAG/motor jurídico y paneles profesional y administrativo.

@@ -32,7 +32,7 @@
 | 6 | La s.38 prohíbe la BD definitiva antes de `DATABASE_SPEC.md`. | `DATABASE_SPEC.md` incremental por rebanadas. | **Aprobado (D5)** |
 | 7 | `ai/` y `legal/` como módulos de la API (s.14) y `legal-engine/`, `pricing-engine/` como componentes (s.21-22). | Paquetes puros en el monorepo; módulos de la API como adaptadores finos. | **Aprobado (D1)** |
 | 8 | No hay trabajo asíncrono. | Worker separado y pg-boss. | **Aprobado (D1)** |
-| 9 | Entidades faltantes: `Quote/Offer`, `Outcome`, `TermsAcceptance`, `OcrResult`, `ExtractedEntity`, `AiRun`, `LegalRule`, `Deadline`, `Vehicle`/partes, `GeneratedDocument`, `Task`. | Incorporarlas en `DATABASE_SPEC.md` en la fase que corresponda. | Diferido |
+| 9 | Entidades faltantes: `Quote/Offer`, `Outcome`, `TermsAcceptance`, `OcrResult`, `ExtractedEntity`, `AiRun`, `LegalRule`, `Deadline`, `Vehicle`/partes, `GeneratedDocument`, `Task`. | Incorporarlas en `DATABASE_SPEC.md` en la fase que corresponda. | Diferido. `OcrResult`: diseño conceptual aprobado el 2026-10-01, no implementado (§5, OCR-A10). `ExtractedEntity`: fuera de la Fase 3 (OCR-A1) |
 | 10 | `LegalSource` con un solo `embedding` y sin fin de vigencia. | `LegalSourceChunk`, más `valid_from` y `valid_to`. | Diferido a Fase 7 |
 | 11 | Estados del caso sin matriz de transiciones. | Máquina de estados explícita y con tests. | Matriz documentada en `DATABASE_SPEC.md` y capa de dominio con tests (Fase 2); transiciones habilitadas por fase; V1-V8 pendientes |
 | 12 | Tablas `Role`/`Permission` frente a 4 roles fijos. | Roles como enum y matriz en código, con camino de evolución. | **Aprobado (D3)** |
@@ -160,6 +160,65 @@ La Fase 1 se da por cerrada solo cuando se cumple todo lo siguiente:
 - **El cuestionario dinámico no se implementa:** `PROJECT_SPEC.md` s.9 paso 3 solo enuncia que existe, y ningún documento define sus preguntas. No se inventa contenido jurídico (s.31); se implementará cuando exista contenido aprobado.
 - Siguen pendientes V1-V8 (estados del caso, §7) y P2.
 
+**Fase 3: diseño del OCR** *(decisiones aprobadas por el responsable del producto el 2026-10-01; diseño, no implementación)*
+
+Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos ni código. El detalle está en `DATABASE_SPEC.md` («OCR del documento»), `API_SPEC.md` («OCR del documento (previsto)») y `SECURITY_SPEC.md`. La evaluación de proveedores está en `docs/ocr-provider-evaluation.md` (documento de trabajo, no normativo).
+
+| ID | Decisión |
+|---|---|
+| OCR-A1 | La Fase 3 comprende el OCR y la generación y almacenamiento del texto extraído. La extracción de entidades (determinista o semántica), la IA y el RAG quedan fuera; la extracción se abordará cuando exista una lista aprobada de entidades y formatos. |
+| OCR-A3 | El texto OCR es «no verificado». En la Fase 3 el propietario puede consultarlo con un aviso de que puede contener errores, y ningún componente lo usa como dato estructurado ni para decidir. Sin mecanismo de revisión ni corrección en la Fase 3: se diseñará con la extracción. |
+| OCR-A4 | Aplazada: quién revisa se decidirá con la revisión y la extracción. |
+| Lectura | Consecuencia de OCR-A3 y `SECURITY_SPEC.md` §3: solo el `USER` propietario lee el texto; cualquier otro actor recibe 404. |
+| OCR-A6 | Solo un documento `CLEAN` entra al OCR. Un `SCAN_FAILED` reprocesado que llega a `CLEAN` entra por el camino normal. Sin backfill de documentos anteriores. |
+| OCR-A7 | El PDF depende de P7 solo si su procesamiento lo envía a un tercero. Con OCR propio no queda bloqueado por P7, pero debe superar la prueba B4. Los PDF excluidos no reciben backfill automático. |
+| OCR-A9 | Lo normativo va en las SPEC existentes; las decisiones, en este informe; el protocolo y la evidencia de la evaluación de proveedores, en `docs/ocr-provider-evaluation.md`. Esto es una diferencia explícita y aprobada respecto de no guardar evidencia de ejecución en `docs/`: esa evidencia es el insumo que exige P4. `AI_SPEC.md` sigue reservado para la fase de IA. |
+| OCR-A10 | El estado vive en `documents.ocr_status`, con 5 estados base más `NOT_APPLICABLE` (definitivo) y `EXCLUDED` (reversible). Hay un `OcrResult` por ejecución, con metadatos técnicos, y el texto de ejecuciones anteriores se conserva provisionalmente hasta que exista una política de retención. El texto va por página, sin coordenadas, con solo normalización técnica, y sin campo de verificación. **OCR-A10.5 (ubicación del texto y cuota): abierto hasta la medición B8.** |
+| OCR-A11 | Operación con el patrón del escaneo: estados escritos junto al resultado del antivirus, activación explícita, PDF desactivado por defecto con salvaguarda de arranque, errores transitorios frente a permanentes, reprocesamiento ADMIN de `FAILED`, sin auditar las exclusiones y logs sin el error crudo del proveedor. El riesgo de pagar dos veces con un OCR externo asíncrono solo se acepta provisionalmente, hasta comprobar en P4 si el proveedor ofrece idempotencia. |
+| OCR-A12 | `document:read_ocr` (`USER` propietario) y `document:reprocess_ocr` (`ADMIN`), con 404 para el resto. La lectura responde 200 con `pages` vacío si no hay texto. La ejecución vigente es la última `COMPLETED` y solo se entrega con `ocr_status = COMPLETED`. El worker solo inserta en `ocr_results` (sin SELECT ni `RETURNING`); la API solo lee; nadie actualiza ni borra resultados. El enum va en una migración separada. La activación se hace con un script del propietario, con una matriz por estado y el invariante «con el OCR activo, ningún `CLEAN` en `NOT_STARTED`». |
+| OCR-A13 | El texto OCR es contenido no confiable desde la Fase 3. |
+| OCR-A14 | La auditoría del OCR no lleva contenido (ni texto, ni fragmentos, ni valores, ni hash del texto). La lectura no se audita. El proveedor queda en `OcrResult`. |
+| OCR-A15 | Criterio de salida de la Fase 3: **borrador aprobado** (ver abajo), pendiente de las decisiones bloqueadas. |
+
+**Contradicciones documentales tratadas en esta rebanada:**
+- **C1** (extracción en la Fase 3 según s.17, o como IA según s.18 y s.19): resuelta por OCR-A1, a favor de s.18 y s.19.
+- **C2** (la Fase 3 según s.34 frente a la propuesta de §6): resuelta por OCR-A1. La Fase 3 incluye OCR, sin extracción ni revisión.
+- **C3** (s.17 «deberá poder ser revisada» frente a §2 «por revisar hasta confirmación»): §2 se cumple, porque nada consume el texto. La capacidad de revisión de s.17 queda **aplazada** por decisión expresa de alcance temporal (OCR-A3), sin reinterpretar s.17.
+- **C4** (`SECURITY_SPEC.md` dice que ningún documento sale a un servicio externo, frente a un posible OCR externo): un OCR externo solo será admisible con aprobación expresa y validación jurídica (OCR-C1, bloqueada).
+- **C5** (el contenido como dato no confiable en la fase de IA, frente a un texto que ya existe en la Fase 3): resuelta por OCR-A13.
+- **C7** (documentos de s.32 que no existen): resuelta por OCR-A9 en lo que toca al OCR.
+- **Sigue abierta:** la numeración de fases de §7 y de `SECURITY_SPEC.md` §11 frente a s.34. No se corrige sin decisión.
+
+**Criterio de salida de la Fase 3 (borrador aprobado el 2026-10-01; no cumplido).** La Fase 3 se cerrará técnicamente cuando se cumpla todo lo siguiente:
+1. **Carga y almacenamiento** (cumplido): subida segura, storage privado, límite, cuota, timeouts, compensación y registro de huérfanos.
+2. **Tratamiento de seguridad** (cumplido): antivirus, descarga solo en `CLEAN`, metadata de JPEG y PNG, recuperación y reprocesamiento ADMIN.
+3. **P4 decidido** y registrado en este informe tras la evaluación documentada en `docs/ocr-provider-evaluation.md`.
+4. **Admisibilidad:**
+   - si el OCR es externo, aprobación expresa (OCR-C1) y validación jurídica (P3 y la transmisión o transferencia internacional) antes de tratar documentos reales;
+   - si es propio, ningún documento sale de nuestra infraestructura.
+5. **Entrada:** solo documentos `CLEAN`; sin backfill (OCR-A6).
+6. **Resultado:** los documentos `CLEAN` incluidos en el alcance aprobado generan texto OCR según el proveedor y la representación elegidos en P4. JPEG y PNG forman parte del alcance inicial, sujetos a la validación del proveedor; el PDF, según OCR-A7 y B4/P7. Al cierre debe constar qué caso de PDF se aplica.
+7. **Texto** no verificado y no confiable, consultado solo por el propietario con aviso; 404 para el resto, con tests de IDOR (OCR-A3, OCR-A12, OCR-A13).
+8. **Auditoría** sin contenido (OCR-A14).
+9. **Modelo** (OCR-A10, incluido A10.5), **operación** (OCR-A11) y **permisos** (OCR-A12) aprobados. Cada cambio de PostgreSQL va con su migración, su test de privilegios y autorización explícita.
+10. **Documentación** actualizada en el mismo cambio que el código (OCR-A9).
+11. **Tests** unitarios y de integración con servicios reales, red-team, y CI verde en `main` en el commit de cierre.
+12. **Aprobación explícita** del responsable del proyecto, con fecha y commit de cierre.
+
+**P3 no es requisito del cierre técnico.** Sí lo es para tratar documentos reales en producción, junto con OCR-C1, C2 y C3 cuando correspondan.
+
+**Fuera de la Fase 3:** extracción de entidades, revisión y corrección, IA y RAG, backfill, y la política definitiva de retención y eliminación.
+
+**Pendientes que condicionan el cierre:**
+- **Pregunta 8b: resuelta el 2026-10-01 (opción A).**
+  - Se admiten documentos sintéticos en la primera ronda de la evaluación, con estas condiciones: sin datos personales reales, sin logos ni membretes de autoridades reales, plantillas genéricas y generación reproducible.
+  - Con ellos son concluyentes B8 (si la densidad de texto es representativa; decide OCR-A10.5), B5, B7, B4, B3 y la idempotencia del proveedor. La calidad (B2) es provisional y nunca justifica P4 por sí sola.
+  - **No autoriza** usar un proveedor externo, crear cuentas ni subir documentos.
+  - **No basta para decidir P4:** P4 exige, según §7, una prueba con documentos reales anonimizados.
+  - La implementación puede empezar antes de P4 detrás de `OcrProvider`, pero la Fase 3 no se declara cerrada sin P4.
+- **Pregunta 8a** (quién hace la validación jurídica de P3 y del OCR externo, y del uso de documentos reales anonimizados en la evaluación): bloqueada. P4, y con él el cierre de la Fase 3, depende también de ella.
+- **Pregunta 7** (lista aprobada de entidades y formatos): bloqueada, pero no condiciona la Fase 3 tras OCR-A1.
+
 **Fuera de alcance por ahora:** Cases, Documents, OCR, Pricing, Payments, Legal AI, RAG, workflow profesional y workflow administrativo completo.
 
 ---
@@ -206,7 +265,7 @@ Hasta que se definan, el sistema no codifica ninguna de estas decisiones y las e
 | P1 | Confirmar el reorden del roadmap (sección 6) | Fase 4 |
 | P2 | Alcance del MVP: tipos de caso, autoridades y ciudades piloto | Fases 2 y 7 |
 | P3 | Nube y región: proveedor, región y ubicación de almacenamiento, PostgreSQL, worker y ClamAV; residencia y, si hay transferencia internacional, su validación jurídica (tabla anterior) | Despliegue de la Fase 3 con documentos reales (staging y producción), bucket de producción y, en la práctica, la elección de OCR (P4). No bloquea el desarrollo local detrás de `StorageProvider` |
-| P4 | Proveedor de OCR, tras prueba con documentos reales anonimizados | Fase 3 |
+| P4 | Proveedor de OCR, tras prueba con documentos reales anonimizados. Protocolo y evidencia en `docs/ocr-provider-evaluation.md`; la decisión final se registrará en este informe (2026-10-01) | Fase 3 |
 | P5 | Pasarela de pagos para Colombia | Fase 6 |
 | P6 | Proveedores de LLM y embeddings; responsable de curar el corpus | Fase 7 |
 | P7 | Limpieza de metadata de PDF (hoy el PDF se entrega intacto solo a su propietario); está por determinar si requiere validación jurídica | Descarga de documentos PDF por otros roles y producción |

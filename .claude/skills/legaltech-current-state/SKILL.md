@@ -19,16 +19,14 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 ## Git (fotografía; verificar)
 
 - **Branch:** `main`.
-- **HEAD:** `c9e8139`, `feat(documents): storage timeouts, one upload limit, quota and ADMIN reprocessing`.
-- **`origin/main`:** `66e23f3` (rebanada 1 de la Fase 3).
-- **13 commits locales sin push** (`origin/main..main`):
-  - rebanada 2 de la Fase 3: `2d96706` storage · `38d75f5` database · `39f9c50` contracts · `f7b4583` api · `ac3a974` worker · `b16108e` web · `7742ca0` infra · `f6bd73b` docs;
-  - rebanada 3.2b: `91b4b28` barrido · `4c2dee4` mínimo privilegio del worker · `c7d6cbb` docs;
-  - **del 2026-10-01:** `75cff33` correcciones de auditoría (3 archivos) · `c9e8139` cierre de la rebanada de documentos (45 archivos).
-- **Push: NO realizado ni autorizado.**
-- **Working tree:**
-  - limpio tras los commits, salvo los archivos de estos skills (`.claude/skills/legaltech-*/SKILL.md`), que se crearon después como archivos sin seguimiento y están pendientes de revisión;
-  - `.claude/settings.local.json` está ignorado por la configuración global de git.
+- **HEAD = `origin/main` = `7f64f79`** (`docs(claude): continuity skills for LegalTech Colombia`).
+  - Push autorizado y hecho el 2026-10-01 (`66e23f3..7f64f79`, 14 commits; DEC-21).
+  - Incluye la rebanada 2 de la Fase 3 (`2d96706`…`f6bd73b`), la 3.2b (`91b4b28`, `4c2dee4`, `c7d6cbb`), las correcciones de auditoría (`75cff33`), el cierre de documentos (`c9e8139`) y estos skills (`7f64f79`).
+- **Working tree** (fotografía): cambios de documentación **sin commit** de la rebanada documental del OCR, pendientes de revisión:
+  - `ARCHITECTURE_REPORT.md`, `DATABASE_SPEC.md`, `API_SPEC.md` y `SECURITY_SPEC.md`;
+  - `docs/ocr-provider-evaluation.md`, nuevo;
+  - este skill y el registro de decisiones.
+- `.claude/settings.local.json` está ignorado por la configuración global de git.
 - **Git exige** `-c safe.directory=C:/legaltech-colombia`.
 
 ## Pruebas (fotografía sobre el contenido de `c9e8139`, 2026-10-01)
@@ -49,7 +47,7 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 - **CI local** (equivalente a `.github/workflows/ci.yml`): todos los pasos en PASS, con la integración ejecutada dos veces.
   - Pasos: format, lint, typecheck, test, build, compose, roles, prisma validate, migrate deploy, deriva, append-only e integración con PostgreSQL, pg-boss, SeaweedFS y ClamAV.
 - **Log de PostgreSQL:** el DDL viene solo de `legaltech_owner`. Los errores de los roles de ejecución son los provocados por los tests.
-- **CI de GitHub:** no se ha ejecutado sobre los 13 commits locales, porque no hay push. La Fase 1 se cerró con CI remoto verde (run 36360859619). El resultado del CI remoto de `origin/main` (`66e23f3`) no está registrado en este skill: comprobarlo con `gh run list` antes de afirmarlo.
+- **CI de GitHub:** run 36941991867 sobre `7f64f79`, **completado y en verde**. Pasaron el job `quality` (format, lint, typecheck, test, build, compose, roles, prisma, deriva, append-only, integración con PostgreSQL, pg-boss, S3 y ClamAV) y el job `secrets-scan` (gitleaks). Como `gh` no está instalado en esta máquina, se consulta con la API pública de GitHub.
 
 ## Red-team (2026-10-01)
 
@@ -80,7 +78,11 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 
 ## Pendiente (solo enumerado: no son requisitos ni alcance de ninguna rebanada)
 
-- **Fase 3:** OCR y extracción revisable (P4), metadata de PDF (P7), ClamAV de producción.
+- **Fase 3:**
+  - OCR: diseño aprobado el 2026-10-01 (DEC-20), **no implementado**;
+  - la 8b está resuelta (sintéticos permitidos en la primera ronda; DEC-22); la implementación puede empezar detrás de `OcrProvider`, pero el cierre espera a P4, que exige documentos reales anonimizados y la 8a (bloqueada); A10.5 espera a B8; OCR-A10.5;
+  - metadata de PDF (P7), ClamAV de producción.
+- La extracción de entidades ya no forma parte de la Fase 3 (OCR-A1).
 - **Producción:** P3, MFA, entrega real de email, backups, pentest, límite por IP real.
 - **Casos:** cuestionario dinámico y V1–V8.
 - **Fases futuras:** pricing, pagos, IA/RAG y paneles profesional y administrativo, incluida la UI del reprocesamiento y de la auditoría.
@@ -96,6 +98,5 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 - **PDF con metadata:** se entrega intacto a su propietario; bloquea su descarga por otros roles.
 - **ClamAV de desarrollo:** sin actualizar firmas; con la configuración por defecto, un contenido demasiado grande o cifrado puede resultar «sin amenazas».
 - **Límite por IP en memoria:** no se comparte entre instancias.
-- **13 commits sin push:** sin CI remoto ni copia fuera de esta máquina.
 - **Scratchpad efímero:** los scripts de red-team y de pruebas a escala no están en el repositorio.
 - **AUD-02** — **DECISIÓN HISTÓRICA / ESTADO NO VERIFICADO:** en el Sprint 1B se observó que dos eventos de auditoría se escribían fuera de su transacción. No se ha comprobado si sigue así (ver `legaltech-decision-log`).

@@ -193,6 +193,47 @@ description: Registro de las decisiones importantes de LegalTech Colombia (fecha
 ### DEC-19 · 2026-10-01 · Push
 
 - **Decisión:** el push **no está autorizado**. Cada push requiere una autorización explícita.
+- **Sustituida por DEC-21.**
+
+### DEC-20 · 2026-10-01 · Diseño del OCR (rebanada documental de la Fase 3)
+
+- **Problema:** la Fase 3 (`PROJECT_SPEC.md` s.34) incluye el OCR, que depende de P4 y tiene huecos y contradicciones documentales.
+- **Decisión:** el diseño aprobado, decisión por decisión, está en `ARCHITECTURE_REPORT.md` §5 («Fase 3: diseño del OCR»; OCR-A1 a OCR-A15), con el detalle en `DATABASE_SPEC.md` 0.8, `API_SPEC.md` 0.9 y `SECURITY_SPEC.md` 0.8. Resumen:
+  - la Fase 3 = OCR y texto; extracción, IA y RAG fuera (A1);
+  - texto no verificado y no confiable, que solo lee el propietario, con 404 para el resto (A3, A13);
+  - solo entran documentos `CLEAN`, sin backfill (A6);
+  - el PDF depende de P7 solo si va a un tercero (A7);
+  - el modelo (A10), la operación (A11) y el RBAC y los permisos (A12), con el worker limitado a INSERT y una activación con invariante;
+  - auditoría sin contenido (A14);
+  - criterio de salida en borrador (A15), en el que P3 no es requisito del cierre técnico.
+- **Motivo:** cerrar las decisiones antes de tocar código, sin inventar el proveedor ni el contenido jurídico.
+- **Alcance:** diseño y documentación. **No autoriza** migraciones, permisos ni código.
+- **No decidido:**
+  - OCR-A10.5 (ubicación del texto; depende de B8);
+  - P3, P4 y P7, y B1–B8;
+  - la pregunta 8b (documentos sintéticos), abierta (resuelta después en DEC-22);
+  - las preguntas 8a (validación jurídica) y 7 (lista de entidades), bloqueadas;
+  - quién revisa (A4, aplazada).
+- **Ref.:** `ARCHITECTURE_REPORT.md` §5; `docs/ocr-provider-evaluation.md` (no normativo).
+
+### DEC-21 · 2026-10-01 · Push de los 14 commits
+
+- **Decisión:** el usuario autorizó explícitamente el push de `main` (`66e23f3..7f64f79`), tras una auditoría de los 14 commits. Sustituye a DEC-19 para ese push. Cada push futuro sigue requiriendo su propia autorización explícita.
+- **Ref.:** CI de GitHub, run 36941991867, en verde sobre `7f64f79`.
+
+### DEC-22 · 2026-10-01 · Documentos sintéticos en la primera ronda de la evaluación del OCR (pregunta 8b)
+
+- **Problema:** la evaluación de proveedores (B8, P4) necesita documentos de prueba, y los reales anonimizados dependen de una validación jurídica bloqueada (8a).
+- **Decisión:** opción A. Se admiten documentos sintéticos en la primera ronda: sin datos personales reales, sin logos ni membretes de autoridades reales, con plantillas genéricas y generación reproducible.
+- **Alcance:**
+  - concluyentes para B8 (con densidad de texto representativa), B5, B7, B4, B3 y la idempotencia del proveedor;
+  - la calidad (B2) es provisional y nunca justifica P4 por sí sola;
+  - la implementación puede empezar antes de P4 detrás de `OcrProvider`, pero la Fase 3 no se cierra sin P4.
+- **No decidido:**
+  - el uso de un proveedor externo, la creación de cuentas y la subida de documentos, que no quedan autorizados;
+  - dónde vive el generador;
+  - la ronda con documentos reales anonimizados (8a, bloqueada), y P4.
+- **Ref.:** `ARCHITECTURE_REPORT.md` §5; `docs/ocr-provider-evaluation.md`.
 
 ---
 
