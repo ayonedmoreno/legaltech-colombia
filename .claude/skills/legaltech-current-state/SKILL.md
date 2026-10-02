@@ -21,7 +21,9 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 - **Branch:** `main`. **`origin/main`:** `7f64f79` (push del 2026-10-01; CI 36941991867 en verde).
 - **Commits locales sin push** (fotografía del 2026-10-02):
   - `20c7e74` `docs: OCR design decisions (Phase 3)`;
-  - el commit de la primera parte de la implementación del OCR, del mismo día.
+  - `a6c14de` primera parte de la implementación del OCR;
+  - `dc9268d` corrección de la exclusión de PDF frente a A7;
+  - el commit de la ronda 1 de la evaluación del OCR (instrumento aislado en `tools/ocr-evaluation/` y resultados en `docs/ocr-provider-evaluation.md`).
 - **Push:** no realizado; requiere autorización explícita (DEC-23).
 - **Working tree:** `.agents/` no está versionado: es un artefacto externo que no se toca (DEC-23). `.claude/settings.local.json` está ignorado por la configuración global de git.
 - **Git exige** `-c safe.directory=C:/legaltech-colombia`.
@@ -76,7 +78,8 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 ## Pendiente (solo enumerado: no son requisitos ni alcance de ninguna rebanada)
 
 - **Fase 3:**
-  - OCR: primera parte implementada el 2026-10-02 (DEC-24) y **desactivada**: faltan el proveedor (P4) y el almacenamiento y la lectura del texto (OCR-A10.5, tras B8);
+  - OCR: primera parte implementada el 2026-10-02 (DEC-24) y **desactivada**: faltan el proveedor (P4) y el almacenamiento y la lectura del texto (OCR-A10.5);
+  - ronda 1 de la evaluación (sintéticos, Tesseract local) hecha el 2026-10-02: B8 medido, insumo para decidir OCR-A10.5, con B2 provisional. P4 sigue abierta (ronda 2 con documentos reales anonimizados, 8a bloqueada);
   - la 8b está resuelta (sintéticos permitidos en la primera ronda; DEC-22); la implementación puede empezar detrás de `OcrProvider`, pero el cierre espera a P4, que exige documentos reales anonimizados y la 8a (bloqueada); A10.5 espera a B8; OCR-A10.5;
   - metadata de PDF (P7), ClamAV de producción.
 - La extracción de entidades ya no forma parte de la Fase 3 (OCR-A1).
