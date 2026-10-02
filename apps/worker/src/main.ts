@@ -117,6 +117,9 @@ if (env.OCR_ENABLED && ocrProvider && ocrTextStore) {
       provider: ocrProvider,
       textStore: ocrTextStore,
       imageRepresentation: env.OCR_IMAGE_REPRESENTATION!,
+      // A PDF only with PDF OCR on and, if the provider is external, P7 resolved (OCR-A7).
+      pdfAllowed:
+        env.OCR_PDF_ENABLED && (!(ocrProvider as OcrProvider).external || env.OCR_PDF_P7_RESOLVED),
       maxAttempts: env.OCR_MAX_ATTEMPTS!,
       leaseSeconds: env.OCR_LEASE_SECONDS!,
       maxPages: env.OCR_MAX_PAGES!,

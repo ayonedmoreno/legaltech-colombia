@@ -83,6 +83,15 @@ export class PrismaOcrRepository implements OcrRepository {
     });
   }
 
+  async markExcluded(claim: OcrClaim): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE documents SET ocr_status = 'EXCLUDED'
+      WHERE id = ${claim.documentId}::uuid
+        AND ocr_status = 'PROCESSING'
+        AND ocr_started_at = ${claim.token}::timestamptz`;
+    return count === 1;
+  }
+
   async releaseForRetry(claim: OcrClaim, delaySeconds: number): Promise<boolean> {
     return this.prisma.$transaction(async (tx: Tx) => {
       const count = await tx.$executeRaw`

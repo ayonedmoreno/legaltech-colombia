@@ -62,6 +62,7 @@ async function setup(
     provider,
     textStore,
     imageRepresentation: "SANITIZED",
+    pdfAllowed: true,
     maxAttempts: 3,
     leaseSeconds: 600,
     maxPages: 5,
@@ -133,6 +134,26 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     expect(t.provider.calls[0]!.content.equals(ORIGINAL)).toBe(true);
     expect(t.provider.calls[0]!.contentType).toBe("application/pdf");
     expect(t.repository.completed[0]!.execution.representation).toBe("ORIGINAL");
+  });
+
+  it("excludes a PDF this worker may not process, without calling the provider (OCR-A7)", async () => {
+    const t = await setup(ok(["p1"]), { fileType: "PDF", pdfAllowed: false });
+
+    expect(await ocrDocument(t.deps, ID)).toBe("excluded");
+
+    expect(t.provider.calls).toHaveLength(0);
+    expect(t.textStore.saved).toEqual([]);
+    expect(t.repository.excluded).toEqual([ID]);
+    // No execution took place: no result, no retry, no failure.
+    expect(t.repository.completed).toEqual([]);
+    expect(t.repository.failed).toEqual([]);
+    expect(t.repository.retries).toEqual([]);
+  });
+
+  it("never excludes an image when PDFs are not allowed", async () => {
+    const t = await setup(ok(["x"]), { pdfAllowed: false });
+    expect(await ocrDocument(t.deps, ID)).toBe("completed");
+    expect(t.repository.excluded).toEqual([]);
   });
 
   it("does nothing, and never calls the provider, without a valid claim", async () => {

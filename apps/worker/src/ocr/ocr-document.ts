@@ -13,6 +13,12 @@ export interface OcrDocumentDeps {
   textStore: OcrTextStore;
   /** Which representation of a JPEG or PNG is processed: decision B3, set by configuration. */
   imageRepresentation: OcrRepresentation;
+  /**
+   * Whether this worker may process a PDF (decision OCR-A7): PDF OCR enabled and, with an external
+   * provider, P7 resolved. Checked again for every job, since a PDF may have been queued under an
+   * earlier configuration.
+   */
+  pdfAllowed: boolean;
   /** The values below come from the provider evaluation (B5, B6, B7): no defaults. */
   maxAttempts: number;
   leaseSeconds: number;
@@ -32,7 +38,9 @@ export type OcrOutcome =
   /** A transient error with attempts left: back to PENDING, with a delayed retry job. */
   | "retry"
   /** Another worker took over the claim before this one could record its result. */
-  | "lost";
+  | "lost"
+  /** A PDF this worker may not process: EXCLUDED, without calling the provider (OCR-A7). */
+  | "excluded";
 
 const CONTENT_TYPES = { PDF: "application/pdf", JPEG: "image/jpeg", PNG: "image/png" } as const;
 
@@ -49,6 +57,11 @@ const MAX_RETRY_DELAY_SECONDS = 3600;
 export async function ocrDocument(deps: OcrDocumentDeps, documentId: string): Promise<OcrOutcome> {
   const claim = await deps.repository.claim(documentId, deps.leaseSeconds);
   if (!claim) return "skipped";
+  // A PDF never reaches a provider this worker may not send it to (decision OCR-A7), even if it was
+  // queued under an earlier configuration: it is EXCLUDED, reversible only by an explicit task.
+  if (claim.fileType === "PDF" && !deps.pdfAllowed) {
+    return (await deps.repository.markExcluded(claim)) ? "excluded" : "lost";
+  }
   const newId = deps.newId ?? randomUUID;
 
   // A PDF is processed as received (rasterizing it is decision B4); an image as configured.

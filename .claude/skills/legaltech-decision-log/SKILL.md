@@ -256,6 +256,7 @@ description: Registro de las decisiones importantes de LegalTech Colombia (fecha
   - un PDF se procesa como se recibió (`ORIGINAL`) hasta B4;
   - la lectura del texto (`document:read_ocr`) y su endpoint se aplazan hasta OCR-A10.5, sin conceder a la API ningún permiso sobre `ocr_results`;
   - la cola `document.ocr_reprocess` es aparte, como `document.reprocess`;
+  - auditoría de `EXCLUDED` frente a A7 (2026-10-02): un PDF encolado con una configuración anterior podía llegar al proveedor. Se corrigió comprobando de nuevo en cada job si el PDF puede procesarse; si no, pasa a `EXCLUDED` sin llamar al proveedor (`PROCESSING → EXCLUDED`, sin `OcrResult` ni evento);
   - los tests reciben la conexión del propietario (`INTEGRATION_OWNER_DATABASE_URL`) solo para leer `ocr_results` y ejecutar la activación.
 - **No decidido:**
   - **CONTRADICCIÓN DOCUMENTAL CONOCIDA — REQUIERE DECISIÓN:** el timestamp de solicitud (OCR-A10.6) frente a las columnas aprobadas en OCR-A12; no se ha implementado;

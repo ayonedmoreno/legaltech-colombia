@@ -60,4 +60,9 @@ export interface OcrRepository {
    * transaction: a transient error, retried while attempts are left.
    */
   releaseForRetry(claim: OcrClaim, delaySeconds: number): Promise<boolean>;
+  /**
+   * PROCESSING → EXCLUDED: a PDF this worker may not process (decision OCR-A7), found after it was
+   * queued. No execution took place: no OcrResult and no audit event (decision OCR-A14).
+   */
+  markExcluded(claim: OcrClaim): Promise<boolean>;
 }

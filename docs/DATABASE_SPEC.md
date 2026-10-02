@@ -348,6 +348,7 @@ Lo que depende de la evaluación de proveedores (`docs/ocr-provider-evaluation.m
   - el reclamo (`PENDING` → `PROCESSING`) es una sentencia condicionada a `ocr_status = PENDING` **y** `status = CLEAN`; suma un intento y fija la hora de inicio, y solo un worker lo consigue;
   - un error transitorio (timeout, 429, 5xx, red) vuelve a `PENDING` con reintento;
   - un error permanente pasa directamente a `FAILED`, sin reintentar;
+  - un PDF que el worker no puede procesar con su configuración actual (PDF desactivado o, con un proveedor externo, P7 sin resolver) pasa de `PROCESSING` a `EXCLUDED` sin llamar al proveedor, sin `OcrResult` y sin evento (OCR-A7, OCR-A14). Esto cubre el caso de un PDF encolado con una configuración anterior: la exclusión se comprueba de nuevo en cada job, no solo cuando el antivirus termina y al arrancar el worker;
   - el resultado (`COMPLETED` o `FAILED`) solo lo escribe el worker que tiene el reclamo.
   - **Nunca se llama al proveedor sin un reclamo válido**, y el estado del caso no cambia (DEC-11).
 - **Recuperación e idempotencia (OCR-A11):** el barrido del worker trata un `PROCESSING` abandonado como el escaneo: vuelve a `PENDING` con un job nuevo o pasa a `FAILED` si agotó los intentos. Un job cuyo documento no está en `PENDING` (ni es un `PROCESSING` abandonado) no hace nada.

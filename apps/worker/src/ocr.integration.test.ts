@@ -244,6 +244,22 @@ describe.skipIf(!hasOwner)("document OCR (PostgreSQL + pg-boss integration)", ()
       expect(await load(document.id)).toMatchObject({ ocrStatus: "PROCESSING" });
     });
 
+    it("excludes a claimed PDF with no result and no event; a lost claim excludes nothing", async () => {
+      const document = await documentIn("CLEAN", "PENDING", "PDF");
+      const stale = (await ocr.claim(document.id, 600))!;
+      await worker.$executeRaw`
+        UPDATE documents SET ocr_started_at = ocr_started_at - interval '1 hour'
+        WHERE id = ${document.id}::uuid`;
+      const current = (await ocr.claim(document.id, 600))!;
+
+      expect(await ocr.markExcluded(stale)).toBe(false);
+      expect(await ocr.markExcluded(current)).toBe(true);
+      expect(await load(document.id)).toMatchObject({ ocrStatus: "EXCLUDED" });
+      expect(await results(document.id)).toEqual([]);
+      expect(await events(document.id, "document.ocr_failed")).toEqual([]);
+      expect(await events(document.id, "document.ocr_completed")).toEqual([]);
+    });
+
     it("puts a transient error back to PENDING with one delayed job, together", async () => {
       const document = await documentIn("CLEAN", "PENDING");
       const claim = (await ocr.claim(document.id, 600))!;

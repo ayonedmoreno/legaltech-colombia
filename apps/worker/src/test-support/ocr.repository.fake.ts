@@ -31,6 +31,7 @@ export class FakeOcrRepository implements OcrRepository {
   readonly completed: Array<{ documentId: string; execution: CompletedExecution }> = [];
   readonly failed: Array<{ documentId: string; execution: FailedExecution }> = [];
   readonly retries: Array<{ documentId: string; delaySeconds: number }> = [];
+  readonly excluded: string[] = [];
   private tick = 0;
 
   add(document: Partial<FakeDocument> & { id: string }): FakeDocument {
@@ -90,6 +91,14 @@ export class FakeOcrRepository implements OcrRepository {
     doc.ocrStatus = "PENDING";
     doc.token = null;
     this.retries.push({ documentId: doc.id, delaySeconds });
+    return true;
+  }
+
+  async markExcluded(claim: OcrClaim): Promise<boolean> {
+    const doc = this.current(claim);
+    if (!doc) return false;
+    doc.ocrStatus = "EXCLUDED";
+    this.excluded.push(doc.id);
     return true;
   }
 
