@@ -8,6 +8,8 @@ import { createPrismaClient, type PrismaClient } from "@legaltech/database";
 export const integration = {
   appDatabaseUrl: process.env.INTEGRATION_DATABASE_URL,
   workerDatabaseUrl: process.env.INTEGRATION_WORKER_DATABASE_URL,
+  /** Test-only: reads what no runtime role may read, and runs the owner's OCR activation. */
+  ownerDatabaseUrl: process.env.INTEGRATION_OWNER_DATABASE_URL,
   s3Endpoint: process.env.INTEGRATION_S3_ENDPOINT,
   s3AccessKeyId: process.env.INTEGRATION_S3_ACCESS_KEY_ID ?? "",
   s3SecretAccessKey: process.env.INTEGRATION_S3_SECRET_ACCESS_KEY ?? "",
@@ -16,6 +18,7 @@ export const integration = {
 };
 
 export const hasDatabase = Boolean(integration.appDatabaseUrl && integration.workerDatabaseUrl);
+export const hasOwner = Boolean(hasDatabase && integration.ownerDatabaseUrl);
 export const hasPipeline = Boolean(hasDatabase && integration.s3Endpoint && integration.clamavPort);
 
 /** The EICAR antivirus test file, assembled at run time so no file in the repository holds it. */
@@ -69,6 +72,11 @@ export async function seedDocument(
     },
   });
   return created;
+}
+
+/** The owner's client: test assertions and the OCR activation only, never the runtime path. */
+export function ownerClient(): PrismaClient {
+  return createPrismaClient(integration.ownerDatabaseUrl!);
 }
 
 export function clients() {

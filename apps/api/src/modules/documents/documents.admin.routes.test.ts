@@ -48,8 +48,11 @@ function headersOf(as: Login, csrf: string | null = as.csrfRaw) {
   return headers;
 }
 
-/** A user's document, uploaded through the API, then set to `status` (as the worker would). */
-async function documentIn(testApp: TestApp, status: string) {
+/**
+ * A user's document, uploaded through the API, then set to `status` and `ocrStatus` (as the worker
+ * would).
+ */
+async function documentIn(testApp: TestApp, status: string, ocrStatus = "NOT_STARTED") {
   const owner = await login(testApp, `owner-${randomUUID()}@example.com`);
   const created = await testApp.app.inject({
     method: "POST",
@@ -71,6 +74,7 @@ async function documentIn(testApp: TestApp, status: string) {
   const id: string = uploaded.json().document.id;
   const stored = testApp.documentsRepository.documents.get(id)!;
   stored.status = status as typeof stored.status;
+  stored.ocrStatus = ocrStatus as typeof stored.ocrStatus;
   return { id, caseId };
 }
 
@@ -183,4 +187,106 @@ describe("POST /api/admin/documents/:documentId/reprocess", () => {
 
     expect((await reprocess(testApp, admin, doc.id)).statusCode).toBe(401);
   });
+});
+
+function reprocessOcr(
+  testApp: TestApp,
+  as: Login | undefined,
+  documentId: string,
+  payload: unknown = { reason: "El proveedor de OCR estuvo caído" },
+  csrf?: string | null,
+) {
+  return testApp.app.inject({
+    method: "POST",
+    url: `/api/admin/documents/${documentId}/ocr/reprocess`,
+    headers: as ? headersOf(as, csrf === undefined ? as.csrfRaw : csrf) : { origin: ORIGIN },
+    payload: payload as object,
+  });
+}
+
+const ocrRequested = (testApp: TestApp) =>
+  testApp.documentsRepository.auditLog.filter(
+    (e) => e.action === "document.ocr_reprocess_requested",
+  );
+
+describe("POST /api/admin/documents/:documentId/ocr/reprocess (decisions OCR-A11, OCR-A12)", () => {
+  it("lets an ADMIN ask for a FAILED OCR to run again: audited and queued, never the text", async () => {
+    const testApp = await buildTestApp();
+    const doc = await documentIn(testApp, "CLEAN", "FAILED");
+    const admin = await login(testApp, "admin@example.com", "ADMIN");
+
+    const response = await reprocessOcr(testApp, admin, doc.id);
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ status: "accepted" });
+    expect(testApp.documentsRepository.enqueuedOcrReprocesses).toEqual([doc.id]);
+    expect(testApp.documentsRepository.enqueuedReprocesses).toEqual([]);
+    const [event] = ocrRequested(testApp);
+    expect(event).toMatchObject({
+      actorUserId: admin.user.id,
+      actorRole: "ADMIN",
+      entityType: "Document",
+      entityId: doc.id,
+      caseId: doc.caseId,
+      metadata: { reason: "El proveedor de OCR estuvo caído" },
+    });
+    expect(JSON.stringify(event)).not.toContain("comparendo");
+    // The answer carries nothing of the document: no access to content or text.
+    expect(Object.keys(response.json())).toEqual(["status"]);
+    // The API does not change the state: the worker does, only if it is still FAILED.
+    expect(testApp.documentsRepository.documents.get(doc.id)!.ocrStatus).toBe("FAILED");
+  });
+
+  it.each(["USER", "PROFESSIONAL", "SUPER_ADMIN"] as const)(
+    "answers 404 to a %s, even the document's owner, and queues nothing",
+    async (role) => {
+      const testApp = await buildTestApp();
+      const doc = await documentIn(testApp, "CLEAN", "FAILED");
+      const someone = await login(testApp, `ocr-${role.toLowerCase()}@example.com`, role);
+
+      expect((await reprocessOcr(testApp, someone, doc.id)).statusCode).toBe(404);
+      expect(testApp.documentsRepository.enqueuedOcrReprocesses).toEqual([]);
+      expect(ocrRequested(testApp)).toHaveLength(0);
+    },
+  );
+
+  it("needs a session (401), the CSRF token (403) and a justification (400)", async () => {
+    const testApp = await buildTestApp();
+    const doc = await documentIn(testApp, "CLEAN", "FAILED");
+    const admin = await login(testApp, "admin@example.com", "ADMIN");
+
+    expect((await reprocessOcr(testApp, undefined, doc.id)).statusCode).toBe(401);
+    const noCsrf = await reprocessOcr(testApp, admin, doc.id, undefined, null);
+    expect(noCsrf.statusCode).toBe(403);
+    expect(noCsrf.json().error.code).toBe("CSRF_INVALID");
+    expect((await reprocessOcr(testApp, admin, doc.id, {})).statusCode).toBe(400);
+    expect((await reprocessOcr(testApp, admin, randomUUID())).statusCode).toBe(404);
+    expect((await reprocessOcr(testApp, admin, "not-a-uuid")).statusCode).toBe(404);
+    expect(testApp.documentsRepository.enqueuedOcrReprocesses).toEqual([]);
+  });
+
+  it.each([
+    ["CLEAN", "NOT_STARTED"],
+    ["CLEAN", "PENDING"],
+    ["CLEAN", "PROCESSING"],
+    ["CLEAN", "COMPLETED"],
+    ["CLEAN", "EXCLUDED"],
+    ["INFECTED", "NOT_APPLICABLE"],
+    ["SCAN_FAILED", "NOT_STARTED"],
+    ["SCAN_FAILED", "FAILED"],
+  ])(
+    "refuses a %s document whose OCR is %s (403): only a failed OCR is retried",
+    async (status, ocr) => {
+      const testApp = await buildTestApp();
+      const doc = await documentIn(testApp, status, ocr);
+      const admin = await login(testApp, "admin@example.com", "ADMIN");
+
+      const response = await reprocessOcr(testApp, admin, doc.id);
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("FORBIDDEN");
+      expect(testApp.documentsRepository.enqueuedOcrReprocesses).toEqual([]);
+      expect(ocrRequested(testApp)).toHaveLength(0);
+    },
+  );
 });

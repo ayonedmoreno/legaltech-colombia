@@ -47,7 +47,7 @@ export type CreateDocumentResult =
 export interface RequestReprocessInput {
   documentId: string;
   caseId: string;
-  /** The `document.reprocess_requested` event, with the ADMIN as actor and the justification. */
+  /** The request's audit event, with the ADMIN as actor and the justification. */
   audit: AuditLogEntry;
 }
 
@@ -82,4 +82,9 @@ export interface DocumentsRepository {
   findDocumentForAdministration(documentId: string): Promise<DocumentRecord | null>;
   /** In one transaction: the request's audit event and its `document.reprocess` job. */
   requestReprocess(input: RequestReprocessInput): Promise<void>;
+  /**
+   * In one transaction: the request's `document.ocr_reprocess_requested` event and its
+   * `document.ocr_reprocess` job (decision OCR-A11, point 5).
+   */
+  requestOcrReprocess(input: RequestReprocessInput): Promise<void>;
 }

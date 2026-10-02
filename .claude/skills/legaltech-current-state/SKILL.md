@@ -18,15 +18,12 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 
 ## Git (fotografía; verificar)
 
-- **Branch:** `main`.
-- **HEAD = `origin/main` = `7f64f79`** (`docs(claude): continuity skills for LegalTech Colombia`).
-  - Push autorizado y hecho el 2026-10-01 (`66e23f3..7f64f79`, 14 commits; DEC-21).
-  - Incluye la rebanada 2 de la Fase 3 (`2d96706`…`f6bd73b`), la 3.2b (`91b4b28`, `4c2dee4`, `c7d6cbb`), las correcciones de auditoría (`75cff33`), el cierre de documentos (`c9e8139`) y estos skills (`7f64f79`).
-- **Working tree** (fotografía): cambios de documentación **sin commit** de la rebanada documental del OCR, pendientes de revisión:
-  - `ARCHITECTURE_REPORT.md`, `DATABASE_SPEC.md`, `API_SPEC.md` y `SECURITY_SPEC.md`;
-  - `docs/ocr-provider-evaluation.md`, nuevo;
-  - este skill y el registro de decisiones.
-- `.claude/settings.local.json` está ignorado por la configuración global de git.
+- **Branch:** `main`. **`origin/main`:** `7f64f79` (push del 2026-10-01; CI 36941991867 en verde).
+- **Commits locales sin push** (fotografía del 2026-10-02):
+  - `20c7e74` `docs: OCR design decisions (Phase 3)`;
+  - el commit de la primera parte de la implementación del OCR, del mismo día.
+- **Push:** no realizado; requiere autorización explícita (DEC-23).
+- **Working tree:** `.agents/` no está versionado: es un artefacto externo que no se toca (DEC-23). `.claude/settings.local.json` está ignorado por la configuración global de git.
 - **Git exige** `-c safe.directory=C:/legaltech-colombia`.
 
 ## Pruebas (fotografía sobre el contenido de `c9e8139`, 2026-10-01)
@@ -79,7 +76,7 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
 ## Pendiente (solo enumerado: no son requisitos ni alcance de ninguna rebanada)
 
 - **Fase 3:**
-  - OCR: diseño aprobado el 2026-10-01 (DEC-20), **no implementado**;
+  - OCR: primera parte implementada el 2026-10-02 (DEC-24) y **desactivada**: faltan el proveedor (P4) y el almacenamiento y la lectura del texto (OCR-A10.5, tras B8);
   - la 8b está resuelta (sintéticos permitidos en la primera ronda; DEC-22); la implementación puede empezar detrás de `OcrProvider`, pero el cierre espera a P4, que exige documentos reales anonimizados y la 8a (bloqueada); A10.5 espera a B8; OCR-A10.5;
   - metadata de PDF (P7), ClamAV de producción.
 - La extracción de entidades ya no forma parte de la Fase 3 (OCR-A1).

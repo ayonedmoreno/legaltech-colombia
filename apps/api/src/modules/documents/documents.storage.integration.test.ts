@@ -143,6 +143,7 @@ describe.skipIf(!databaseUrl || !s3Endpoint)("upload compensation (PostgreSQL + 
       repository: new PrismaDocumentsRepository(prisma, {
         enqueueDocumentScan: () => Promise.reject(new Error("queue unavailable")),
         enqueueDocumentReprocess: () => Promise.reject(new Error("not used")),
+        enqueueDocumentOcrReprocess: () => Promise.reject(new Error("not used")),
       }),
       cases,
       storage: recording,

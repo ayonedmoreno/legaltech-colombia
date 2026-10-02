@@ -171,6 +171,7 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
     const failingQueue: JobQueue = {
       enqueueDocumentScan: () => Promise.reject(new Error("queue unavailable")),
       enqueueDocumentReprocess: () => Promise.reject(new Error("queue unavailable")),
+      enqueueDocumentOcrReprocess: () => Promise.reject(new Error("not used")),
     };
     const failing = new PrismaDocumentsRepository(prisma, failingQueue);
     const data = input(owner);
@@ -305,6 +306,7 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
       const failing = new PrismaDocumentsRepository(prisma, {
         enqueueDocumentScan: () => Promise.resolve(),
         enqueueDocumentReprocess: () => Promise.reject(new Error("queue unavailable")),
+        enqueueDocumentOcrReprocess: () => Promise.reject(new Error("not used")),
       });
       await expect(
         failing.requestReprocess({ documentId: doc.id, caseId: owner.caseId, audit }),
@@ -320,6 +322,56 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
         metadata: { reason: "ClamAV no disponible" },
       });
       expect(await jobs("document.reprocess", doc.id)).toBe(1);
+    });
+
+    it("records an OCR reprocessing request and its own job together, or neither", async () => {
+      const owner = await userWithCase();
+      const doc = created(await repository.createDocument(input(owner)));
+      const admin = await prisma.user.create({
+        data: {
+          email: `it-admin-${randomUUID()}@example.com`,
+          passwordHash: "$argon2id$integration-test-placeholder",
+          fullName: "Admin",
+          role: "ADMIN",
+        },
+      });
+      const audit: AuditLogEntry = {
+        actorUserId: admin.id,
+        actorRole: "ADMIN",
+        action: "document.ocr_reprocess_requested",
+        entityType: "Document",
+        entityId: doc.id,
+        metadata: { reason: "Proveedor de OCR no disponible" },
+        requestId: randomUUID(),
+        ip: "203.0.113.9",
+        userAgent: "integration-test",
+      };
+      const requested = () =>
+        prisma.auditLog.findMany({
+          where: { action: "document.ocr_reprocess_requested", entityId: doc.id },
+        });
+
+      const failing = new PrismaDocumentsRepository(prisma, {
+        enqueueDocumentScan: () => Promise.resolve(),
+        enqueueDocumentReprocess: () => Promise.reject(new Error("not used")),
+        enqueueDocumentOcrReprocess: () => Promise.reject(new Error("queue unavailable")),
+      });
+      await expect(
+        failing.requestOcrReprocess({ documentId: doc.id, caseId: owner.caseId, audit }),
+      ).rejects.toThrow("queue unavailable");
+      expect(await requested()).toHaveLength(0);
+
+      await repository.requestOcrReprocess({ documentId: doc.id, caseId: owner.caseId, audit });
+      const [event] = await requested();
+      expect(event).toMatchObject({
+        actorUserId: admin.id,
+        actorRole: "ADMIN",
+        caseId: owner.caseId,
+        metadata: { reason: "Proveedor de OCR no disponible" },
+      });
+      expect(await jobs("document.ocr_reprocess", doc.id)).toBe(1);
+      // Its own queue: never the security treatment's.
+      expect(await jobs("document.reprocess", doc.id)).toBe(0);
     });
   });
 });

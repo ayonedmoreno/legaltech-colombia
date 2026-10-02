@@ -219,6 +219,22 @@ Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos 
 - **Pregunta 8a** (quién hace la validación jurídica de P3 y del OCR externo, y del uso de documentos reales anonimizados en la evaluación): bloqueada. P4, y con él el cierre de la Fase 3, depende también de ella.
 - **Pregunta 7** (lista aprobada de entidades y formatos): bloqueada, pero no condiciona la Fase 3 tras OCR-A1.
 
+**OCR, primera parte de la implementación (2026-10-02; no cumple el criterio de salida)**
+- **Implementado, detrás de `OcrProvider` y probado con proveedores falsos** (tests unitarios, de integración con PostgreSQL y pg-boss reales, de privilegios y red-team):
+  - los estados (OCR-A10.2) escritos junto al resultado del antivirus;
+  - el reclamo con su token, los resultados por ejecución en `ocr_results`, los reintentos con espera creciente, el barrido de reclamos abandonados y el reprocesamiento ADMIN (API y worker);
+  - la activación del propietario con su invariante, la salvaguarda del PDF frente a P7 y los logs sin el error del proveedor.
+- **Permisos:** el worker actualiza las tres columnas de OCR e inserta en `ocr_results` sin poder leerlos; la API no tiene ninguno en esa tabla.
+- **Desactivado por defecto:** el worker no arranca con el OCR activado mientras falten el proveedor (P4) y el almacenamiento del texto (OCR-A10.5).
+- **Pendiente:**
+  - el almacenamiento y la lectura del texto (OCR-A10.5, tras B8), con `document:read_ocr`;
+  - P4 y los valores de B5, B6 y B7.
+- **CONTRADICCIÓN DOCUMENTAL CONOCIDA — REQUIERE DECISIÓN:**
+  - OCR-A10.6 incluye el «timestamp de solicitud» entre los metadatos de cada ejecución;
+  - OCR-A12 solo aprobó como columnas del worker las de estado, intentos e inicio;
+  - no se ha implementado: hace falta decidir si se añade una columna (con su permiso), si va en el job o si se retira de OCR-A10.6.
+- **Tests:** el CI recibe la conexión del propietario (`INTEGRATION_OWNER_DATABASE_URL`) solo para ellos: leer lo que ningún rol de ejecución puede leer y ejecutar la activación como el propietario.
+
 **Fuera de alcance por ahora:** Cases, Documents, OCR, Pricing, Payments, Legal AI, RAG, workflow profesional y workflow administrativo completo.
 
 ---

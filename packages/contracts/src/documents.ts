@@ -18,8 +18,21 @@ export const documentStatusSchema = z.enum([
 ]);
 export type DocumentStatus = z.infer<typeof documentStatusSchema>;
 
-/** Mirrors `DocumentOcrStatus` (first Documents slice: NOT_STARTED only). */
-export const documentOcrStatusSchema = z.enum(["NOT_STARTED"]);
+/**
+ * Mirrors `DocumentOcrStatus` (DATABASE_SPEC.md, "OCR del documento"; decision OCR-A10.2). Only a
+ * `CLEAN` document ever leaves `NOT_STARTED`. `NOT_APPLICABLE` is definitive (an `INFECTED`
+ * document); `EXCLUDED` is reversible only by an explicit task (a PDF the OCR may not process, or a
+ * document that was `CLEAN` before the OCR was activated).
+ */
+export const documentOcrStatusSchema = z.enum([
+  "NOT_STARTED",
+  "PENDING",
+  "PROCESSING",
+  "COMPLETED",
+  "FAILED",
+  "NOT_APPLICABLE",
+  "EXCLUDED",
+]);
 export type DocumentOcrStatus = z.infer<typeof documentOcrStatusSchema>;
 
 /**
@@ -101,6 +114,26 @@ export const DOCUMENT_REPROCESS_QUEUE = "document.reprocess";
 /** Payload of a `document.reprocess` job: only the document's id. */
 export const documentReprocessJobSchema = z.object({ documentId: z.string().uuid() }).strict();
 export type DocumentReprocessJob = z.infer<typeof documentReprocessJobSchema>;
+
+/**
+ * The pg-boss queue of the OCR of a document (DATABASE_SPEC.md, "OCR del documento"). Only the
+ * worker enqueues it, in the transaction that records a `CLEAN` result or retries an OCR.
+ */
+export const DOCUMENT_OCR_QUEUE = "document.ocr";
+
+/** Payload of a `document.ocr` job: only the document's id, never its name, content or text. */
+export const documentOcrJobSchema = z.object({ documentId: z.string().uuid() }).strict();
+export type DocumentOcrJob = z.infer<typeof documentOcrJobSchema>;
+
+/**
+ * The pg-boss queue of an ADMIN's explicit OCR reprocessing (API enqueues; the worker moves a
+ * document whose OCR is `FAILED` back to `PENDING`).
+ */
+export const DOCUMENT_OCR_REPROCESS_QUEUE = "document.ocr_reprocess";
+
+/** Payload of a `document.ocr_reprocess` job: only the document's id. */
+export const documentOcrReprocessJobSchema = z.object({ documentId: z.string().uuid() }).strict();
+export type DocumentOcrReprocessJob = z.infer<typeof documentOcrReprocessJobSchema>;
 
 /** Path parameters of `POST /api/admin/documents/:documentId/reprocess`. */
 export const documentIdParamsSchema = z.object({ documentId: z.string().uuid() }).strict();

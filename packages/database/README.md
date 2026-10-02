@@ -24,6 +24,13 @@ Prisma schema, migrations and database client. Only this package may import `@pr
     not use with its configuration (no cron, persisted warnings, jobs with dependencies or
     publish/subscribe). Enabling any of them, or upgrading pg-boss, needs a migration that
     reviews these grants.
+  - `20261001100000_document_reprocess_queue`: the `document.reprocess` queue of an ADMIN's
+    reprocessing of a `SCAN_FAILED` document (only inserts its row; no privilege changes).
+  - `20261002100000_document_ocr_states` and `20261002100100_document_ocr`: the OCR states of a
+    document, its claim columns, `ocr_results` (one immutable row per execution, never any text),
+    the `document.ocr` and `document.ocr_reprocess` queues, and the worker's privileges (UPDATE of
+    the three OCR columns, INSERT only on `ocr_results`). The application role gets nothing on
+    `ocr_results` yet.
 - The worker role is created by `infra/docker/postgres/init/01-roles.sql` on a new volume. On an
   existing development volume, create it once as the owner (`CREATE ROLE legaltech_worker LOGIN
 PASSWORD 'legaltech_worker_dev'; GRANT CONNECT ON DATABASE legaltech TO legaltech_worker; GRANT

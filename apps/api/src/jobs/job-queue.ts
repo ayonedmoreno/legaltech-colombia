@@ -1,6 +1,8 @@
 import {
+  DOCUMENT_OCR_REPROCESS_QUEUE,
   DOCUMENT_REPROCESS_QUEUE,
   DOCUMENT_SCAN_QUEUE,
+  type DocumentOcrReprocessJob,
   type DocumentReprocessJob,
   type DocumentScanJob,
 } from "@legaltech/contracts";
@@ -23,6 +25,8 @@ export interface JobQueue {
   enqueueDocumentScan(documentId: string, tx: TransactionSql): Promise<void>;
   /** Enqueues an ADMIN's reprocessing of a SCAN_FAILED document inside the caller's transaction. */
   enqueueDocumentReprocess(documentId: string, tx: TransactionSql): Promise<void>;
+  /** Enqueues an ADMIN's reprocessing of a FAILED OCR inside the caller's transaction. */
+  enqueueDocumentOcrReprocess(documentId: string, tx: TransactionSql): Promise<void>;
 }
 
 /**
@@ -56,5 +60,11 @@ export class PgBossJobQueue implements JobQueue {
     const job: DocumentReprocessJob = { documentId };
     const id = await this.boss.send(DOCUMENT_REPROCESS_QUEUE, job, { db: tx });
     if (!id) throw new Error("the document.reprocess job was not enqueued");
+  }
+
+  async enqueueDocumentOcrReprocess(documentId: string, tx: TransactionSql): Promise<void> {
+    const job: DocumentOcrReprocessJob = { documentId };
+    const id = await this.boss.send(DOCUMENT_OCR_REPROCESS_QUEUE, job, { db: tx });
+    if (!id) throw new Error("the document.ocr_reprocess job was not enqueued");
   }
 }

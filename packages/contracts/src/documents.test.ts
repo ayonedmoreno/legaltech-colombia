@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   apiErrorSchema,
+  DOCUMENT_OCR_QUEUE,
+  DOCUMENT_OCR_REPROCESS_QUEUE,
   documentFileNameSchema,
+  documentOcrJobSchema,
+  documentOcrReprocessJobSchema,
+  documentOcrStatusSchema,
   documentParamsSchema,
   DOCUMENT_MAX_BYTES,
   DOCUMENT_QUOTA_BYTES,
@@ -87,5 +92,32 @@ describe("document contracts", () => {
     expect(
       reprocessDocumentRequestSchema.safeParse({ reason: "ok", status: "CLEAN" }).success,
     ).toBe(false);
+  });
+
+  it("has the seven OCR statuses of the approved design, with two distinct exclusions", () => {
+    expect(documentOcrStatusSchema.options).toEqual([
+      "NOT_STARTED",
+      "PENDING",
+      "PROCESSING",
+      "COMPLETED",
+      "FAILED",
+      "NOT_APPLICABLE",
+      "EXCLUDED",
+    ]);
+  });
+
+  it("names the OCR queues apart from the security treatment's", () => {
+    expect(DOCUMENT_OCR_QUEUE).toBe("document.ocr");
+    expect(DOCUMENT_OCR_REPROCESS_QUEUE).toBe("document.ocr_reprocess");
+  });
+
+  it.each([
+    ["document.ocr", documentOcrJobSchema],
+    ["document.ocr_reprocess", documentOcrReprocessJobSchema],
+  ])("accepts a %s job with a document id only (never a name, content or text)", (_, schema) => {
+    const id = "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11";
+    expect(schema.safeParse({ documentId: id }).success).toBe(true);
+    expect(schema.safeParse({ documentId: "x" }).success).toBe(false);
+    expect(schema.safeParse({ documentId: id, text: "..." }).success).toBe(false);
   });
 });

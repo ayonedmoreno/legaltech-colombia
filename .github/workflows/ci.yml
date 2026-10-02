@@ -138,13 +138,16 @@ jobs:
         env:
           INTEGRATION_DATABASE_URL: ${{ env.APP_PSQL_URL }}
           INTEGRATION_WORKER_DATABASE_URL: postgresql://legaltech_worker:legaltech_worker_dev@localhost:5432/legaltech
+          # Test-only: reads what no runtime role may read (OCR results) and runs the owner's OCR
+          # activation as the owner it is designed for.
+          INTEGRATION_OWNER_DATABASE_URL: ${{ env.OWNER_PSQL_URL }}
           INTEGRATION_S3_ENDPOINT: http://127.0.0.1:8333
           INTEGRATION_S3_ACCESS_KEY_ID: legaltech_ci
           INTEGRATION_S3_SECRET_ACCESS_KEY: legaltech_ci_secret
           INTEGRATION_CLAMAV_HOST: 127.0.0.1
           INTEGRATION_CLAMAV_PORT: "3310"
         run: |
-          for v in INTEGRATION_DATABASE_URL INTEGRATION_WORKER_DATABASE_URL INTEGRATION_S3_ENDPOINT INTEGRATION_CLAMAV_PORT; do
+          for v in INTEGRATION_DATABASE_URL INTEGRATION_WORKER_DATABASE_URL INTEGRATION_OWNER_DATABASE_URL INTEGRATION_S3_ENDPOINT INTEGRATION_CLAMAV_PORT; do
             test -n "${!v}" || { echo "$v is empty"; exit 1; }
           done
           pnpm --filter @legaltech/api run test:integration

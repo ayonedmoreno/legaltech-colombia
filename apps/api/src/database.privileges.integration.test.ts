@@ -22,6 +22,8 @@ const EXPECTED: Record<string, string[]> = {
   cases: ["SELECT", "INSERT"],
   case_status_history: ["SELECT", "INSERT"],
   documents: ["SELECT", "INSERT"],
+  // OCR results (decision OCR-A12): nothing until an endpoint reads the text (OCR-A10.5).
+  ocr_results: [],
   _prisma_migrations: [],
 };
 

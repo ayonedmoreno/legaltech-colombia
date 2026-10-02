@@ -3,6 +3,19 @@ import type { ScanClaim, ScanRepository } from "./scan.types.js";
 
 type Tx = Prisma.TransactionClient;
 
+/**
+ * The OCR as the security treatment sees it once activated (decision OCR-A11, point 1): the
+ * document's OCR state is written in the same transaction as the antivirus result, so a CLEAN
+ * document never exists with an undecided OCR state. Absent (the default) while the OCR is off:
+ * the OCR state then stays NOT_STARTED, and the activation script resolves it later.
+ */
+export interface ScanOcrActivation {
+  /** Whether a CLEAN PDF enters the OCR (decision OCR-A7); otherwise it is EXCLUDED. */
+  pdfEnabled: boolean;
+  /** Enqueues the document's `document.ocr` job inside the caller's transaction. */
+  enqueue(tx: Tx, documentId: string): Promise<void>;
+}
+
 interface ClaimRow {
   id: string;
   case_id: string;
@@ -18,7 +31,10 @@ interface ClaimRow {
  * columns only, and INSERT (without RETURNING: it cannot read) on audit_logs.
  */
 export class PrismaScanRepository implements ScanRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly ocr: ScanOcrActivation | null = null,
+  ) {}
 
   async claim(documentId: string, leaseSeconds: number): Promise<ScanClaim | null> {
     // One conditional statement: two workers cannot both claim the same document.
@@ -99,16 +115,30 @@ export class PrismaScanRepository implements ScanRepository {
     return this.prisma.$transaction(async (tx: Tx) => {
       const [clock] = await tx.$queryRaw<Array<{ now: Date }>>`SELECT clock_timestamp() AS now`;
       const now = clock!.now;
-      const count = await tx.$executeRaw`
-        UPDATE documents
-        SET status = ${status}::document_status,
-            scanned_at = ${now},
-            scan_signature = ${extra.signature ?? null},
-            sanitized_storage_key = ${extra.sanitizedStorageKey ?? null}
-        WHERE id = ${claim.documentId}::uuid
-          AND status = 'SCANNING'
-          AND scan_started_at = ${claim.token}::timestamptz`;
+      const ocrStatus = this.ocrStatusFor(claim, status);
+      const count = ocrStatus
+        ? await tx.$executeRaw`
+            UPDATE documents
+            SET status = ${status}::document_status,
+                scanned_at = ${now},
+                scan_signature = ${extra.signature ?? null},
+                sanitized_storage_key = ${extra.sanitizedStorageKey ?? null},
+                ocr_status = ${ocrStatus}::document_ocr_status
+            WHERE id = ${claim.documentId}::uuid
+              AND status = 'SCANNING'
+              AND scan_started_at = ${claim.token}::timestamptz`
+        : await tx.$executeRaw`
+            UPDATE documents
+            SET status = ${status}::document_status,
+                scanned_at = ${now},
+                scan_signature = ${extra.signature ?? null},
+                sanitized_storage_key = ${extra.sanitizedStorageKey ?? null}
+            WHERE id = ${claim.documentId}::uuid
+              AND status = 'SCANNING'
+              AND scan_started_at = ${claim.token}::timestamptz`;
       if (count !== 1) return false;
+      // A CLEAN document in the OCR's scope gets its job with its result (decision OCR-A11).
+      if (ocrStatus === "PENDING") await this.ocr!.enqueue(tx, claim.documentId);
       // The system acts: no actor. Never the file name (personal data stays out of audit).
       await tx.$executeRaw`
         INSERT INTO audit_logs (action, entity_type, entity_id, case_id, new_value, occurred_at)
@@ -116,5 +146,21 @@ export class PrismaScanRepository implements ScanRepository {
                 ${JSON.stringify(newValue)}::jsonb, ${now})`;
       return true;
     });
+  }
+
+  /**
+   * The OCR state a result implies once the OCR is active (decisions OCR-A6, OCR-A7, OCR-A10.2):
+   * CLEAN → PENDING, or EXCLUDED for a PDF the OCR may not process; INFECTED → NOT_APPLICABLE;
+   * SCAN_FAILED leaves it NOT_STARTED (a reprocessing may still make the document CLEAN). Null
+   * while the OCR is off, or when the state does not change.
+   */
+  private ocrStatusFor(
+    claim: ScanClaim,
+    status: "CLEAN" | "INFECTED" | "SCAN_FAILED",
+  ): "PENDING" | "EXCLUDED" | "NOT_APPLICABLE" | null {
+    if (!this.ocr) return null;
+    if (status === "INFECTED") return "NOT_APPLICABLE";
+    if (status !== "CLEAN") return null;
+    return claim.fileType === "PDF" && !this.ocr.pdfEnabled ? "EXCLUDED" : "PENDING";
   }
 }

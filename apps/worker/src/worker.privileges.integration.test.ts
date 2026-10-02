@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@legaltech/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clients, hasDatabase, seedDocument } from "./test-support/integration.js";
@@ -11,6 +12,8 @@ const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFEREN
 const EXPECTED_TABLES: Record<string, string[]> = {
   "public.documents": ["SELECT"],
   "public.audit_logs": ["INSERT"],
+  // OCR results (decision OCR-A12): written once, never read back, changed or deleted.
+  "public.ocr_results": ["INSERT"],
   // Through the parent table: completion updates dependents, and the fail/retry statement names it.
   "pgboss.job": ["SELECT", "INSERT", "UPDATE"],
   // The queue's own table: fetch, complete, retry and retention.
@@ -20,6 +23,19 @@ const EXPECTED_TABLES: Record<string, string[]> = {
   "pgboss.queue": ["SELECT", "UPDATE"],
   "pgboss.version": ["SELECT"],
 };
+
+/** documents: only the security treatment's and the OCR's state and claim columns. */
+const DOCUMENT_UPDATABLE = [
+  "status",
+  "scan_attempts",
+  "scan_started_at",
+  "scanned_at",
+  "scan_signature",
+  "sanitized_storage_key",
+  "ocr_status",
+  "ocr_attempts",
+  "ocr_started_at",
+];
 
 /** pgboss.version: only the timers of what the worker runs (flows and supervision). */
 const VERSION_UPDATABLE = ["flow_on", "monitor_backoff_on"];
@@ -128,5 +144,37 @@ describe.skipIf(!hasDatabase)("worker role privileges (PostgreSQL integration)",
     await expect(worker.$queryRaw`SELECT count(*) FROM audit_logs`).rejects.toThrow(
       /permission denied/,
     );
+  });
+
+  it("can update exactly the treatment's and the OCR's state and claim columns of documents", async () => {
+    const rows = await worker.$queryRaw<Array<{ column: string }>>`
+      SELECT column_name AS "column" FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'documents'
+        AND has_column_privilege(current_user, 'public.documents', column_name, 'UPDATE')`;
+    expect(rows.map((row) => row.column).sort()).toEqual([...DOCUMENT_UPDATABLE].sort());
+  });
+
+  it("inserts an OCR result but can never read it back, change it or delete it", async () => {
+    const document = await seedDocument(app, { fileType: "PNG", fileSize: 10 });
+    const id = randomUUID();
+    await expect(
+      worker.$executeRaw`
+        INSERT INTO ocr_results (id, document_id, outcome, engine, attempts, finished_at, error_code)
+        VALUES (${id}::uuid, ${document.id}::uuid, 'FAILED', 'x', 1, clock_timestamp(), 'timeout')`,
+    ).resolves.toBe(1);
+
+    for (const statement of [
+      `SELECT count(*) FROM ocr_results`,
+      `UPDATE ocr_results SET engine = 'y' WHERE id = '${id}'`,
+      `DELETE FROM ocr_results WHERE id = '${id}'`,
+      // RETURNING reads the row: refused, hence the id generated before the INSERT.
+      `INSERT INTO ocr_results (id, document_id, outcome, engine, attempts, finished_at, error_code)
+       VALUES ('${randomUUID()}', '${document.id}', 'FAILED', 'x', 1, clock_timestamp(), 'timeout')
+       RETURNING id`,
+    ]) {
+      await expect(worker.$executeRawUnsafe(statement), statement).rejects.toThrow(
+        /permission denied/,
+      );
+    }
   });
 });

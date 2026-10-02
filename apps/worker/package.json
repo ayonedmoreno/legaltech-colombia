@@ -13,7 +13,8 @@
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "test:integration": "vitest run integration.test --no-file-parallelism"
+    "test:integration": "vitest run integration.test --no-file-parallelism",
+    "ocr:activate": "tsx src/scripts/activate-ocr.ts"
   },
   "dependencies": {
     "@legaltech/contracts": "workspace:*",

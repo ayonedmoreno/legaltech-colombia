@@ -14,6 +14,8 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
         "Document",
         "EmailOutbox",
         "EmailVerificationToken",
+        // OCR (decision OCR-A10.3): technical metadata of each execution.
+        "OcrResult",
         "PasswordResetToken",
         "Session",
         "User",
@@ -86,5 +88,16 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
 
   it("does not reference pgvector", () => {
     expect(schema.toLowerCase()).not.toContain("vector");
+  });
+
+  it("keeps OCR results free of any text or entity while OCR-A10.5 and the extraction are open", () => {
+    const body = (/model OcrResult {([^}]*)}/.exec(schema)?.[1] ?? "")
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith("///"))
+      .join(" ");
+    expect(body).toMatch(/processedSha256/);
+    // No text, page content, provider message, coordinates or extracted entity.
+    expect(body).not.toMatch(/text|content|message|coordinate|entit|Json/i);
+    expect(schema).not.toMatch(/model ExtractedEntity/);
   });
 });

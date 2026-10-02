@@ -57,4 +57,26 @@ describe("documents policy — first Documents slice (ADR-003)", () => {
       can(actor("ADMIN", "SUSPENDED"), "document:reprocess", { caseOwnerId: OTHER }).allowed,
     ).toBe(false);
   });
+
+  it("lets only an ADMIN reprocess a document's OCR, whoever owns it (decision OCR-A12)", () => {
+    expect(can(actor("ADMIN"), "document:reprocess_ocr", { caseOwnerId: OTHER })).toEqual({
+      allowed: true,
+    });
+    // Not even the owner, nor a SUPER_ADMIN: an operational action, not a right over the text.
+    for (const role of ["USER", "PROFESSIONAL", "SUPER_ADMIN"] as const) {
+      expect(can(actor(role), "document:reprocess_ocr", { caseOwnerId: SELF })).toEqual({
+        allowed: false,
+        reason: "role_not_allowed",
+      });
+    }
+    expect(
+      can(actor("ADMIN", "SUSPENDED"), "document:reprocess_ocr", { caseOwnerId: OTHER }).allowed,
+    ).toBe(false);
+  });
+
+  it("gives an ADMIN no access to documents themselves (OCR reprocessing included)", () => {
+    for (const action of ACTIONS) {
+      expect(can(actor("ADMIN"), action, { caseOwnerId: OTHER }).allowed).toBe(false);
+    }
+  });
 });

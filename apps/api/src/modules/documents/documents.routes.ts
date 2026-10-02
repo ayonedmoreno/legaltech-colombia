@@ -129,10 +129,11 @@ export const documentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = async (
 };
 
 /**
- * `/api/admin/documents` (API_SPEC.md): administrative actions on documents. Only
- * `POST /:documentId/reprocess` for now: an ADMIN asks, with a justification, for a document
- * whose security treatment failed (`SCAN_FAILED`) to be treated again. Session and CSRF first;
- * then the policy, so any other role gets a 404 before its request is read.
+ * `/api/admin/documents` (API_SPEC.md): administrative actions on documents. An ADMIN asks, with a
+ * justification, for a document whose security treatment failed (`POST /:documentId/reprocess`)
+ * or whose OCR failed (`POST /:documentId/ocr/reprocess`) to be processed again. Session and CSRF
+ * first; then the policy, so any other role gets a 404 before its request is read. Neither action
+ * gives access to the document's content or text.
  */
 export const adminDocumentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = async (
   app,
@@ -149,6 +150,26 @@ export const adminDocumentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = asyn
     if (!body.success) throw validationError(body.error);
 
     await documentsService.requestReprocess(
+      current,
+      params.data.documentId,
+      body.data.reason,
+      requestContext(request),
+    );
+    const accepted: AcceptedResponse = { status: "accepted" };
+    return reply.code(202).send(accepted);
+  });
+
+  app.post("/:documentId/ocr/reprocess", async (request, reply) => {
+    const current = await requireCurrentUser(request, authService);
+    requireCsrf(request, authService, current.session, appOrigin);
+    documentsService.assertCanReprocessOcr(current);
+
+    const params = documentIdParamsSchema.safeParse(request.params);
+    if (!params.success) throw notFound();
+    const body = reprocessDocumentRequestSchema.safeParse(request.body);
+    if (!body.success) throw validationError(body.error);
+
+    await documentsService.requestOcrReprocess(
       current,
       params.data.documentId,
       body.data.reason,

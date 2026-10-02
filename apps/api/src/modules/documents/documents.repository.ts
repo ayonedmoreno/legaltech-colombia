@@ -102,4 +102,14 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
       await this.jobs.enqueueDocumentReprocess(input.documentId, fromPrisma(tx));
     });
   }
+
+  async requestOcrReprocess(input: RequestReprocessInput): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw<Array<{ now: Date }>>`SELECT clock_timestamp() AS now`;
+      await tx.auditLog.create({
+        data: { ...auditLogData(input.audit), caseId: input.caseId, occurredAt: row!.now },
+      });
+      await this.jobs.enqueueDocumentOcrReprocess(input.documentId, fromPrisma(tx));
+    });
+  }
 }

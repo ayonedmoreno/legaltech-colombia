@@ -29,4 +29,55 @@ describe("loadWorkerEnv", () => {
       /^(?!.*secret-9).*WORKER_DATABASE_URL/,
     );
   });
+
+  const OCR = {
+    OCR_ENABLED: "true",
+    OCR_IMAGE_REPRESENTATION: "SANITIZED",
+    OCR_MAX_ATTEMPTS: "3",
+    OCR_LEASE_SECONDS: "900",
+    OCR_RETRY_DELAY_SECONDS: "30",
+    OCR_MAX_PAGES: "50",
+  };
+
+  it("keeps the OCR off, and PDF OCR off, by default", () => {
+    expect(loadWorkerEnv(BASE)).toMatchObject({
+      OCR_ENABLED: false,
+      OCR_PDF_ENABLED: false,
+      OCR_PDF_P7_RESOLVED: false,
+    });
+  });
+
+  it("requires every value from the provider evaluation once the OCR is on, with no defaults", () => {
+    expect(loadWorkerEnv({ ...BASE, ...OCR })).toMatchObject({
+      OCR_ENABLED: true,
+      OCR_IMAGE_REPRESENTATION: "SANITIZED",
+      OCR_MAX_ATTEMPTS: 3,
+      OCR_LEASE_SECONDS: 900,
+      OCR_RETRY_DELAY_SECONDS: 30,
+      OCR_MAX_PAGES: 50,
+    });
+    for (const name of [
+      "OCR_IMAGE_REPRESENTATION",
+      "OCR_MAX_ATTEMPTS",
+      "OCR_LEASE_SECONDS",
+      "OCR_RETRY_DELAY_SECONDS",
+      "OCR_MAX_PAGES",
+    ] as const) {
+      const env: Record<string, string> = { ...BASE, ...OCR };
+      delete env[name];
+      expect(() => loadWorkerEnv(env)).toThrow(new RegExp(`${name}: required when OCR_ENABLED`));
+    }
+  });
+
+  it("rejects invalid OCR values without echoing them", () => {
+    for (const [name, value] of [
+      ["OCR_ENABLED", "yes-secret"],
+      ["OCR_PDF_ENABLED", "1-secret"],
+      ["OCR_IMAGE_REPRESENTATION", "RASTER-secret"],
+    ]) {
+      expect(() => loadWorkerEnv({ ...BASE, ...OCR, [name!]: value })).toThrow(
+        new RegExp(`^(?!.*secret).*${name}`),
+      );
+    }
+  });
 });

@@ -235,6 +235,33 @@ description: Registro de las decisiones importantes de LegalTech Colombia (fecha
   - la ronda con documentos reales anonimizados (8a, bloqueada), y P4.
 - **Ref.:** `ARCHITECTURE_REPORT.md` §5; `docs/ocr-provider-evaluation.md`.
 
+### DEC-23 · 2026-10-02 · Autonomía técnica alta y regla de commits
+
+- **Decisión:** el usuario autoriza implementar sin pedir permiso todo lo que derive de decisiones aprobadas, de especificaciones o de un bug demostrado, con tests, red-team y documentación.
+- **Commits:** se crean cuando la rebanada está técnicamente completa y dentro de lo aprobado, tras verificar tests, lint, typecheck, build y `git status`.
+- **Push:** nunca automático; requiere autorización explícita en ese momento.
+- **Hay que detenerse ante:**
+  - decisiones nuevas;
+  - terceros o datos que salen de nuestra infraestructura (cuentas, credenciales, envíos);
+  - cambios de alcance;
+  - permisos o arquitectura sin una decisión que los respalde.
+- **`.agents/`:** es un artefacto externo, no rastreado; no se versiona, no se borra y no se mezcla con `.claude/skills/`.
+
+### DEC-24 · 2026-10-02 · OCR, primera parte de la implementación (decisiones técnicas derivadas)
+
+- **Alcance:** todo lo que no depende de OCR-A10.5 ni de P4, detrás de `OcrProvider` (ver `ARCHITECTURE_REPORT.md` §5 y `DATABASE_SPEC.md` 0.9).
+- **Decisiones técnicas tomadas por derivación** (nivel 8 de la jerarquía: detalles de implementación):
+  - el reintento de un error transitorio es un job nuevo con espera creciente (máximo 1 h), en la misma transacción que la vuelta a `PENDING`; el worker cuenta los intentos;
+  - los valores de B3, B5, B6 y B7 son configuración obligatoria con el OCR activado, sin valores por defecto;
+  - un PDF se procesa como se recibió (`ORIGINAL`) hasta B4;
+  - la lectura del texto (`document:read_ocr`) y su endpoint se aplazan hasta OCR-A10.5, sin conceder a la API ningún permiso sobre `ocr_results`;
+  - la cola `document.ocr_reprocess` es aparte, como `document.reprocess`;
+  - los tests reciben la conexión del propietario (`INTEGRATION_OWNER_DATABASE_URL`) solo para leer `ocr_results` y ejecutar la activación.
+- **No decidido:**
+  - **CONTRADICCIÓN DOCUMENTAL CONOCIDA — REQUIERE DECISIÓN:** el timestamp de solicitud (OCR-A10.6) frente a las columnas aprobadas en OCR-A12; no se ha implementado;
+  - OCR-A10.5, P4 y B1–B8.
+- **Ref.:** commit de la implementación del OCR (2026-10-02); red-team del OCR, 34/34 mutaciones detectadas.
+
 ---
 
 ## Decisiones pendientes conocidas (no tomar por inferencia)

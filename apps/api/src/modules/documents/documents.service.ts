@@ -297,4 +297,53 @@ export class DocumentsService {
       },
     });
   }
+
+  /** Whether the caller may ask for an OCR reprocessing at all; anyone else gets a 404. */
+  assertCanReprocessOcr(current: CurrentUserResult): void {
+    if (!can(current.actor, "document:reprocess_ocr", { caseOwnerId: current.user.id }).allowed) {
+      throw notFound();
+    }
+  }
+
+  /**
+   * `POST /api/admin/documents/:documentId/ocr/reprocess` (decisions OCR-A11 and OCR-A12): an
+   * ADMIN asks, with a justification, for a document whose OCR is `FAILED` to be processed again.
+   * The request's `document.ocr_reprocess_requested` event and a `document.ocr_reprocess` job are
+   * written together; the worker then moves the OCR back to `PENDING` only if it is still `FAILED`.
+   * It never reads, returns or exposes the document's content or text.
+   */
+  async requestOcrReprocess(
+    current: CurrentUserResult,
+    documentId: string,
+    reason: string,
+    context: RequestContext,
+  ): Promise<void> {
+    this.assertCanReprocessOcr(current);
+    const document = await this.options.repository.findDocumentForAdministration(documentId);
+    if (!document) throw notFound();
+    if (document.status !== "CLEAN" || document.ocrStatus !== "FAILED") {
+      throw new HttpError(
+        403,
+        "FORBIDDEN",
+        "Solo se puede reprocesar el OCR de un documento cuyo OCR falló.",
+      );
+    }
+    await this.options.repository.requestOcrReprocess({
+      documentId: document.id,
+      caseId: document.caseId,
+      audit: {
+        actorUserId: current.user.id,
+        actorRole: current.user.role,
+        action: "document.ocr_reprocess_requested",
+        entityType: "Document",
+        entityId: document.id,
+        caseId: document.caseId,
+        // The justification only: never the file name nor any text.
+        metadata: { reason },
+        requestId: context.requestId,
+        ip: context.ip,
+        userAgent: context.userAgent,
+      },
+    });
+  }
 }

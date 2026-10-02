@@ -21,6 +21,8 @@ export class FakeDocumentsRepository implements DocumentsRepository {
   readonly enqueuedScans: string[] = [];
   /** Documents whose `document.reprocess` job was enqueued (with the request's event). */
   readonly enqueuedReprocesses: string[] = [];
+  /** Documents whose `document.ocr_reprocess` job was enqueued (with the request's event). */
+  readonly enqueuedOcrReprocesses: string[] = [];
   /** Test hook: stands in for PostgreSQL's clock. */
   clock: () => Date = () => new Date();
 
@@ -92,6 +94,11 @@ export class FakeDocumentsRepository implements DocumentsRepository {
   async requestReprocess(input: RequestReprocessInput): Promise<void> {
     this.recordAudit({ ...input.audit, caseId: input.caseId });
     this.enqueuedReprocesses.push(input.documentId);
+  }
+
+  async requestOcrReprocess(input: RequestReprocessInput): Promise<void> {
+    this.recordAudit({ ...input.audit, caseId: input.caseId });
+    this.enqueuedOcrReprocesses.push(input.documentId);
   }
 
   /** Where every audit event is recorded; tests override it to make the audit write fail. */

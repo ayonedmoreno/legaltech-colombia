@@ -264,11 +264,35 @@ enum DocumentStatus {
   @@map("document_status")
 }
 
-/// First Documents slice: OCR has not started; later values arrive with the OCR (P4).
+/// OCR of a document (DATABASE_SPEC.md "OCR del documento"; decision OCR-A10.2). Only a CLEAN
+/// document leaves NOT_STARTED. NOT_APPLICABLE is definitive (INFECTED); EXCLUDED is reversible
+/// only by an explicit task (a PDF the OCR may not process, or CLEAN before the OCR was activated).
 enum DocumentOcrStatus {
   NOT_STARTED
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  NOT_APPLICABLE
+  EXCLUDED
 
   @@map("document_ocr_status")
+}
+
+/// How an OCR execution ended (one OcrResult per finished execution).
+enum OcrResultOutcome {
+  COMPLETED
+  FAILED
+
+  @@map("ocr_result_outcome")
+}
+
+/// The representation of the document an OCR execution processed (decision B3 still open).
+enum OcrRepresentation {
+  ORIGINAL
+  SANITIZED
+
+  @@map("ocr_representation")
 }
 
 /// A document of a case (PROJECT_SPEC.md s.16). The file lives in private object storage
@@ -294,11 +318,43 @@ model Document {
   scanSignature       String?           @map("scan_signature")
   /// Derived copy without identifying metadata (JPEG/PNG only). The original is never changed.
   sanitizedStorageKey String?           @unique @map("sanitized_storage_key")
+  /// OCR executions started (claims); the worker gives up after its limit.
+  ocrAttempts         Int               @default(0) @map("ocr_attempts")
+  /// Start of the OCR in progress: the claim token of the worker that holds it.
+  ocrStartedAt        DateTime?         @map("ocr_started_at") @db.Timestamptz(6)
 
-  case       Case @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  uploadedBy User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  case       Case        @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  uploadedBy User        @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  ocrResults OcrResult[]
 
   @@index([caseId, createdAt])
   @@index([status])
+  @@index([ocrStatus])
   @@map("documents")
+}
+
+/// One finished OCR execution of a document (decision OCR-A10.3): technical metadata only, written
+/// once by the worker (INSERT only, its id generated before the INSERT) and never changed. Never
+/// the text and never a provider message: a normalized error code only. Where the text lives is
+/// decision OCR-A10.5, still open.
+model OcrResult {
+  id              String             @id @db.Uuid
+  documentId      String             @map("document_id") @db.Uuid
+  outcome         OcrResultOutcome
+  /// The OCR provider or engine that ran this execution.
+  engine          String
+  engineVersion   String?            @map("engine_version")
+  representation  OcrRepresentation?
+  /// SHA-256 of the processed object (never of the text).
+  processedSha256 String?            @map("processed_sha256")
+  pages           Int?
+  attempts        Int
+  startedAt       DateTime?          @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime           @map("finished_at") @db.Timestamptz(6)
+  errorCode       String?            @map("error_code")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@index([documentId, finishedAt])
+  @@map("ocr_results")
 }

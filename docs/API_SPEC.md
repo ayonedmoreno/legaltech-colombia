@@ -1,9 +1,9 @@
 # API_SPEC.md
 
-**Versión:** 0.9 (diseño del OCR aprobado, sin implementar; Fase 3)
+**Versión:** 0.10 (OCR: reprocesamiento ADMIN y estados implementados; Fase 3)
 **Fecha:** 2026-10-01
-**Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual, salvo la sección «OCR del documento (previsto)», que describe un diseño aprobado el 2026-10-01 y **todavía no implementado**.
-**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios; reprocesamiento administrativo de un tratamiento fallido). OCR: solo diseño previsto. Pagos y demás se añaden con su fase.
+**Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual. En la sección «OCR del documento» cada endpoint indica si está implementado o solo previsto.
+**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios; reprocesamiento administrativo de un tratamiento fallido). OCR: reprocesamiento ADMIN y estados implementados; la lectura del texto, prevista. Pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
 Este documento se mantiene manualmente junto a los esquemas de `packages/contracts` (la API todavía no genera OpenAPI). Toda modificación de un endpoint actualiza este archivo en el mismo cambio.
@@ -51,6 +51,10 @@ Este documento se mantiene manualmente junto a los esquemas de `packages/contrac
 | `document.scan_failed` | El tratamiento no se pudo completar tras agotar los intentos: el documento pasa a `SCAN_FAILED` | Sin actor (sistema) | — (`new_value`: `status`, `attempts`) |
 | `document.reprocess_requested` | Un ADMIN pide reprocesar un documento `SCAN_FAILED` (`POST /api/admin/documents/:documentId/reprocess`), en la misma transacción que el job `document.reprocess` | ADMIN | `reason` (la justificación; nunca el nombre del archivo) |
 | `document.scan_reprocessed` | El worker devuelve a `PENDING_SCAN` un documento que seguía `SCAN_FAILED`, con una ronda nueva de intentos y su job `document.scan`, en la misma transacción | Sin actor (sistema) | — (`new_value`: `status`, `previousAttempts`) |
+| `document.ocr_completed` | El OCR de un documento terminó con texto: `ocr_status` pasa a `COMPLETED`. Lo escribe el worker con su `OcrResult`, en la misma transacción | Sin actor (sistema) | — (`new_value`: `status`, `pages`, `attempts`; nunca texto) |
+| `document.ocr_failed` | El OCR falló de forma permanente, agotó sus intentos o se abandonó: `ocr_status` pasa a `FAILED` | Sin actor (sistema) | — (`new_value`: `status`, `code` normalizado, `attempts`) |
+| `document.ocr_reprocess_requested` | Un ADMIN pide reprocesar un OCR `FAILED` (`POST /api/admin/documents/:documentId/ocr/reprocess`), en la misma transacción que el job `document.ocr_reprocess` | ADMIN | `reason` (la justificación; nunca el nombre del archivo ni texto) |
+| `document.ocr_reprocessed` | El worker devuelve a `PENDING` un OCR que seguía `FAILED`, con una ronda nueva de intentos y su job `document.ocr`, en la misma transacción | Sin actor (sistema) | — (`new_value`: `status`, `previousAttempts`) |
 | `user.seeded` | Cuenta interna creada por el seed de desarrollo (`pnpm db:seed`, ADR-003); nunca en producción | Sin actor | `role` |
 
 Nunca se registran contraseñas, tokens (en claro o hash) ni correos en claro. Los eventos de una petición HTTP guardan `requestId`, `ip` y `userAgent`; los del sistema sin petición (`document.scan_*`, escritos por el worker, y `user.seeded`) los dejan vacíos.
@@ -318,36 +322,35 @@ Pide que un documento cuyo tratamiento de seguridad falló (`SCAN_FAILED`) se tr
 
 **Fuera de esta rebanada:** OCR, limpieza de metadata de PDF (decisión pendiente), versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
 
-### OCR del documento (previsto; diseño aprobado el 2026-10-01, no implementado)
+### OCR del documento (diseño aprobado el 2026-10-01; primera parte implementada el 2026-10-02)
 
-**Estos endpoints no existen todavía.** Recogen el diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; modelo y estados en `DATABASE_SPEC.md`, «OCR del documento»). Los nombres de rutas, acciones y eventos son provisionales hasta la rebanada de implementación.
+Diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; modelo y estados en `DATABASE_SPEC.md`, «OCR del documento»).
 
-**`GET /api/cases/:caseId/documents/:documentId/ocr`** (`document:read_ocr`; solo el `USER` propietario):
+**El OCR no está activo:** no hay proveedor (P4) ni almacenamiento del texto (OCR-A10.5). Por eso ningún documento tiene hoy texto ni un OCR `FAILED`.
+
+#### `POST /api/admin/documents/:documentId/ocr/reprocess` (implementado)
+
+`document:reprocess_ocr`; solo `ADMIN`. Mismo diseño que el reprocesamiento del escaneo:
+- **Petición:** sesión y CSRF; la policy se comprueba antes de leer la petición. Cuerpo `{ "reason": "string" }`, de 1 a 500 caracteres; cualquier otro campo produce `VALIDATION_ERROR`.
+- **202:** `{ "status": "accepted" }`. En una transacción se escriben `document.ocr_reprocess_requested` (actor ADMIN, con la justificación) y el job `document.ocr_reprocess`. El worker solo actúa si el documento sigue `CLEAN` con el OCR `FAILED`: lo devuelve a `PENDING` con una ronda nueva de intentos (una ejecución nueva).
+- **400:** `VALIDATION_ERROR`. **401:** `UNAUTHENTICATED`. **403:** `CSRF_INVALID`.
+- **403:** `FORBIDDEN` si el documento no es `CLEAN` con el OCR `FAILED`.
+- **404:** cualquier otro rol (también el `USER` propietario), documento inexistente o identificador inválido.
+- No da acceso al contenido ni al texto, y nunca es automático.
+
+#### `GET /api/cases/:caseId/documents/:documentId/ocr` (previsto, no implementado)
+
+`document:read_ocr`; solo el `USER` propietario. Depende del almacenamiento del texto (OCR-A10.5).
 - **200:** `{ "ocrStatus": "...", "pages": [{ "number": 1, "text": "string" }] }`.
   - `pages` solo trae texto si `ocrStatus` es `COMPLETED`, y es el de la ejecución vigente (la última `COMPLETED`).
-  - En cualquier otro estado (`NOT_STARTED`, `PENDING`, `PROCESSING`, `FAILED`, `EXCLUDED`, `NOT_APPLICABLE`), `pages` es `[]`. **Una lista vacía significa «no hay texto disponible en este estado», no que el documento tenga cero páginas.** Tras un reprocesamiento que termina `FAILED` no se devuelve el texto de una ejecución anterior.
+  - En cualquier otro estado, `pages` es `[]`. **Una lista vacía significa «no hay texto disponible en este estado», no que el documento tenga cero páginas.** Tras un reprocesamiento que termina `FAILED` no se devuelve el texto de una ejecución anterior.
 - **El texto es no verificado y no confiable** (OCR-A3, OCR-A13):
   - puede contener errores, y la interfaz muestra siempre ese aviso;
   - se trata como texto y nunca como HTML o instrucciones;
   - no se registra en logs.
-- **404:** `NOT_FOUND`: cualquier otro rol (`PROFESSIONAL`, `ADMIN`, `SUPER_ADMIN`), un caso o documento ajeno, inexistente o con identificador inválido. La lectura no se audita, igual que la descarga (OCR-A14).
+- **404:** cualquier otro rol, o un caso o documento ajeno, inexistente o con identificador inválido. La lectura no se audita (OCR-A14).
 
-**`POST /api/admin/documents/:documentId/ocr/reprocess`** (`document:reprocess_ocr`; solo `ADMIN`), con el mismo diseño que el reprocesamiento del escaneo:
-- **Petición:** sesión y CSRF; cuerpo `{ "reason": "string" }`, de 1 a 500 caracteres.
-- **202:** se audita `document.ocr_reprocess_requested` y se encola el reprocesamiento en una transacción. El worker solo actúa si el documento sigue en `FAILED`, con una ejecución nueva.
-- **403:** `FORBIDDEN` si el OCR no está en `FAILED`.
-- **404:** cualquier otro rol.
-- No da acceso al texto, y nunca es automático.
-
-**Eventos de auditoría previstos** (sin texto, fragmentos, valores ni hash del texto; el proveedor queda en el resultado técnico, no en el evento; OCR-A14):
-- `document.ocr_completed` (páginas, intentos);
-- `document.ocr_failed` (código de error normalizado, intentos);
-- `document.ocr_reprocess_requested` (actor ADMIN y su justificación);
-- `document.ocr_reprocessed`.
-
-No se auditan el reclamo, los reintentos, la lectura ni las marcas `EXCLUDED` y `NOT_APPLICABLE`.
-
-**Contrato:** `Document.ocrStatus` pasará a admitir los valores del diseño. Eso cambia el esquema de `packages/contracts` y las etiquetas de la web en el mismo cambio que los implemente.
+**Eventos de auditoría** (sin texto, fragmentos, valores ni hash del texto; el proveedor queda en `ocr_results`, no en el evento; OCR-A14): ver la tabla de eventos. No se auditan el reclamo, los reintentos, la lectura ni las marcas `EXCLUDED` y `NOT_APPLICABLE`.
 
 ## Esquemas
 
@@ -402,12 +405,12 @@ Los tipos son los 7 de `PROJECT_SPEC.md` s.9 paso 2 (comparendo, infracción, fo
   "fileType": "PDF | JPEG | PNG",
   "fileSize": 12345,
   "status": "UPLOADED | PENDING_SCAN | SCANNING | CLEAN | INFECTED | SCAN_FAILED",
-  "ocrStatus": "NOT_STARTED",
+  "ocrStatus": "NOT_STARTED | PENDING | PROCESSING | COMPLETED | FAILED | NOT_APPLICABLE | EXCLUDED",
   "createdAt": "ISO-8601"
 }
 ```
 
-No se devuelven las claves de almacenamiento, el usuario que lo subió, los intentos ni la firma detectada. `UPLOADED` solo aparece en documentos anteriores al antivirus: una subida nueva entra en `PENDING_SCAN`. Hoy `ocrStatus` siempre es `NOT_STARTED`; los demás valores llegarán con la implementación del OCR (ver «OCR del documento (previsto)»).
+No se devuelven las claves de almacenamiento, el usuario que lo subió, los intentos ni la firma detectada. `UPLOADED` solo aparece en documentos anteriores al antivirus: una subida nueva entra en `PENDING_SCAN`. Con el OCR desactivado (hoy, mientras faltan P4 y OCR-A10.5), `ocrStatus` es `NOT_STARTED`. Sus valores están en `DATABASE_SPEC.md`, «OCR del documento».
 
 ### `CaseStatusChange`
 

@@ -1050,6 +1050,7 @@ describe.skipIf(!databaseUrl)("PrismaAuthRepository (PostgreSQL integration)", (
           repository: new PrismaDocumentsRepository(prisma, {
             enqueueDocumentScan: () => Promise.reject(new Error("not used by these tests")),
             enqueueDocumentReprocess: () => Promise.reject(new Error("not used by these tests")),
+            enqueueDocumentOcrReprocess: () => Promise.reject(new Error("not used")),
           }),
           cases: new PrismaCasesRepository(prisma),
           storage: new MemoryStorageProvider(),

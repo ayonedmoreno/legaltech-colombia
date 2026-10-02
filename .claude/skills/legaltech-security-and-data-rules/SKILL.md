@@ -148,6 +148,16 @@ Toda petición que modifica exige la cookie `__Host-csrf`, la cabecera `X-CSRF-T
 - **Efecto:** el objeto huérfano nunca se sirve, porque no tiene fila.
 - 🔴 **No hay recolector ni reconciliación automática.** No se implementa sin decisión.
 
+**OCR** 🟢 primera parte · 🔴 texto y proveedor (ver `DATABASE_SPEC.md`, «OCR del documento»)
+
+- **Implementado:**
+  - solo entran documentos `CLEAN`, y su estado de OCR se escribe con el resultado del antivirus;
+  - reclamo con token, reintentos con espera creciente, barrido, reprocesamiento solo ADMIN (`document:reprocess_ocr`), activación del propietario con invariante;
+  - los logs solo llevan códigos normalizados, nunca el error del proveedor.
+- **Permisos:** el worker solo inserta en `ocr_results`, sin SELECT ni `RETURNING`; la API no tiene ninguno en esa tabla.
+- **Desactivado:** sin proveedor (P4) ni almacenamiento del texto (OCR-A10.5), el worker no arranca con el OCR activado.
+- 🔴 **Pendiente:** almacenamiento y lectura del texto (`document:read_ocr`), con el texto tratado como no confiable (OCR-A13).
+
 ## Permisos PostgreSQL (`DATABASE_SPEC.md` «Permisos de los roles de ejecución») 🟢
 
 - **`legaltech_owner`:** solo migraciones. Es el único que ejecuta DDL.
@@ -157,7 +167,8 @@ Toda petición que modifica exige la cookie `__Host-csrf`, la cabecera `X-CSRF-T
   - en `pgboss`: USAGE, SELECT de `version` y `queue`, INSERT y SELECT(id) de `job_common`;
   - nada en `_prisma_migrations`; sin DELETE, TRUNCATE ni CREATE.
 - **`legaltech_worker`:**
-  - `documents`: SELECT y UPDATE solo de `status`, `scan_attempts`, `scan_started_at`, `scanned_at`, `scan_signature` y `sanitized_storage_key`;
+  - `documents`: SELECT y UPDATE solo de `status`, `scan_attempts`, `scan_started_at`, `scanned_at`, `scan_signature`, `sanitized_storage_key`, `ocr_status`, `ocr_attempts` y `ocr_started_at`;
+  - `ocr_results`: solo INSERT;
   - `audit_logs`: INSERT;
   - `pgboss`: `job_common` S/I/U/D, `job` S/I/U, `job_dependency` S/D, `queue` S/U, `version` S más UPDATE(`flow_on`, `monitor_backoff_on`);
   - nada en `schedule`, `subscription`, `bam` ni `warning`.
