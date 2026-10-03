@@ -14,6 +14,8 @@ const EXPECTED_TABLES: Record<string, string[]> = {
   "public.audit_logs": ["INSERT"],
   // OCR results (decision OCR-A12): written once, never read back, changed or deleted.
   "public.ocr_results": ["INSERT"],
+  // OCR text per page (decision OCR-A10.5): the same, never read back.
+  "public.ocr_result_pages": ["INSERT"],
   // Through the parent table: completion updates dependents, and the fail/retry statement names it.
   "pgboss.job": ["SELECT", "INSERT", "UPDATE"],
   // The queue's own table: fetch, complete, retry and retention.
@@ -167,6 +169,11 @@ describe.skipIf(!hasDatabase)("worker role privileges (PostgreSQL integration)",
       `SELECT count(*) FROM ocr_results`,
       `UPDATE ocr_results SET engine = 'y' WHERE id = '${id}'`,
       `DELETE FROM ocr_results WHERE id = '${id}'`,
+      `SELECT count(*) FROM ocr_result_pages`,
+      `UPDATE ocr_result_pages SET text = 'y' WHERE ocr_result_id = '${id}'`,
+      `DELETE FROM ocr_result_pages WHERE ocr_result_id = '${id}'`,
+      `INSERT INTO ocr_result_pages (ocr_result_id, page_number, text)
+       VALUES ('${id}', 1, 'x') RETURNING text`,
       // RETURNING reads the row: refused, hence the id generated before the INSERT.
       `INSERT INTO ocr_results (id, document_id, outcome, engine, attempts, finished_at, error_code)
        VALUES ('${randomUUID()}', '${document.id}', 'FAILED', 'x', 1, clock_timestamp(), 'timeout')

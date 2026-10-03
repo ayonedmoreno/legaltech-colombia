@@ -22,8 +22,9 @@ const EXPECTED: Record<string, string[]> = {
   cases: ["SELECT", "INSERT"],
   case_status_history: ["SELECT", "INSERT"],
   documents: ["SELECT", "INSERT"],
-  // OCR results (decision OCR-A12): nothing until an endpoint reads the text (OCR-A10.5).
-  ocr_results: [],
+  // OCR (decisions OCR-A10.5, OCR-A12): read only, to serve the owner; never written by the API.
+  ocr_results: ["SELECT"],
+  ocr_result_pages: ["SELECT"],
   _prisma_migrations: [],
 };
 
@@ -103,5 +104,21 @@ describe.skipIf(!databaseUrl)("application role privileges (PostgreSQL integrati
       SELECT has_column_privilege(current_user, 'pgboss.job_common', 'id', 'SELECT') AS id,
              has_column_privilege(current_user, 'pgboss.job_common', 'data', 'SELECT') AS data`;
     expect(columns).toEqual({ id: true, data: false });
+  });
+
+  it("never writes OCR results or their text: they are the worker's, and immutable", async () => {
+    for (const statement of [
+      `INSERT INTO ocr_results (id, document_id, outcome, engine, attempts, finished_at, error_code)
+       VALUES (gen_random_uuid(), gen_random_uuid(), 'FAILED', 'x', 1, now(), 'timeout')`,
+      "UPDATE ocr_results SET engine = engine WHERE false",
+      "DELETE FROM ocr_results WHERE false",
+      "INSERT INTO ocr_result_pages (ocr_result_id, page_number, text) VALUES (gen_random_uuid(), 1, 'x')",
+      "UPDATE ocr_result_pages SET text = text WHERE false",
+      "DELETE FROM ocr_result_pages WHERE false",
+    ]) {
+      await expect(prisma.$executeRawUnsafe(statement), statement).rejects.toThrow(
+        /permission denied/,
+      );
+    }
   });
 });

@@ -2,7 +2,6 @@ import type { PrismaClient } from "@legaltech/database";
 import { describe, expect, it } from "vitest";
 import { assertOcrStartupPreconditions } from "./ocr-activation.js";
 import type { OcrProvider } from "./ocr-provider.js";
-import type { OcrTextStore } from "./ocr-text-store.js";
 
 /** A client whose only query is the invariant's count. */
 const prismaWith = (violations: number) =>
@@ -13,22 +12,17 @@ const provider = (external: boolean): OcrProvider => ({
   external,
   recognize: async () => ({ pages: [], engineVersion: null }),
 });
-const textStore: OcrTextStore = { save: async () => {} };
 
 const base = {
   prisma: prismaWith(0),
   provider: provider(false),
-  textStore,
   pdfEnabled: false,
   pdfP7Resolved: false,
 };
 
-describe("assertOcrStartupPreconditions (decisions P4, OCR-A7, OCR-A10.5, OCR-A12)", () => {
-  it("refuses to start without a provider (P4) or a text store (OCR-A10.5)", async () => {
+describe("assertOcrStartupPreconditions (decisions P4, OCR-A7, OCR-A12)", () => {
+  it("refuses to start without a provider (P4 is open)", async () => {
     await expect(assertOcrStartupPreconditions({ ...base, provider: null })).rejects.toThrow(/P4/);
-    await expect(assertOcrStartupPreconditions({ ...base, textStore: null })).rejects.toThrow(
-      /OCR-A10\.5/,
-    );
   });
 
   it("never sends a PDF to an external provider before P7 is resolved", async () => {

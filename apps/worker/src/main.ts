@@ -17,7 +17,6 @@ import {
   workDocumentOcr,
   workDocumentOcrReprocesses,
 } from "./ocr/ocr-queue.js";
-import type { OcrTextStore } from "./ocr/ocr-text-store.js";
 import { PrismaOcrRepository } from "./ocr/ocr.repository.js";
 import { PrismaScanRepository } from "./scan/scan.repository.js";
 
@@ -32,16 +31,14 @@ const log = (event: Record<string, unknown>) =>
 
 const prisma = createPrismaClient(env.WORKER_DATABASE_URL);
 
-// OCR (DATABASE_SPEC.md, "OCR del documento"): no provider is chosen yet (decision P4) and where
-// the text is stored is not decided (OCR-A10.5), so with OCR_ENABLED=true the worker refuses to
-// start. With the OCR off (the default) nothing changes for the security treatment.
+// OCR (DATABASE_SPEC.md, "OCR del documento"): the text is stored in PostgreSQL with each result
+// (OCR-A10.5), but no provider is chosen yet (decision P4), so with OCR_ENABLED=true the worker
+// refuses to start. With the OCR off (the default) nothing changes for the security treatment.
 const ocrProvider: OcrProvider | null = null;
-const ocrTextStore: OcrTextStore | null = null;
 if (env.OCR_ENABLED) {
   await assertOcrStartupPreconditions({
     prisma,
     provider: ocrProvider,
-    textStore: ocrTextStore,
     pdfEnabled: env.OCR_PDF_ENABLED,
     pdfP7Resolved: env.OCR_PDF_P7_RESOLVED,
   });
@@ -108,14 +105,13 @@ await workDocumentScans(
 // An ADMIN's explicit reprocessing of a SCAN_FAILED document (requested through the API).
 await workDocumentReprocesses(boss, prisma, (event) => log({ level: "info", ...event }));
 
-if (env.OCR_ENABLED && ocrProvider && ocrTextStore) {
+if (env.OCR_ENABLED && ocrProvider) {
   await workDocumentOcr(
     boss,
     {
       repository: new PrismaOcrRepository(prisma, boss),
       storage: new S3StorageProvider(storageEnv),
       provider: ocrProvider,
-      textStore: ocrTextStore,
       imageRepresentation: env.OCR_IMAGE_REPRESENTATION!,
       // A PDF only with PDF OCR on and, if the provider is external, P7 resolved (OCR-A7).
       pdfAllowed:

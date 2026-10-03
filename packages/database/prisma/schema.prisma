@@ -335,8 +335,7 @@ model Document {
 
 /// One finished OCR execution of a document (decision OCR-A10.3): technical metadata only, written
 /// once by the worker (INSERT only, its id generated before the INSERT) and never changed. Never
-/// the text and never a provider message: a normalized error code only. Where the text lives is
-/// decision OCR-A10.5, still open.
+/// a provider message: a normalized error code only. Its text is in OcrResultPage (OCR-A10.5).
 model OcrResult {
   id              String             @id @db.Uuid
   documentId      String             @map("document_id") @db.Uuid
@@ -353,8 +352,23 @@ model OcrResult {
   finishedAt      DateTime           @map("finished_at") @db.Timestamptz(6)
   errorCode       String?            @map("error_code")
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  document Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  pageRows OcrResultPage[]
 
   @@index([documentId, finishedAt])
   @@map("ocr_results")
+}
+
+/// The text of one page of an OCR execution (decision OCR-A10.5), unverified and untrusted
+/// (OCR-A3, OCR-A13). Written once by the worker (INSERT only) with its OcrResult; read only by the
+/// API, for the owner. A database check at commit keeps exactly pages 1..n per completed execution.
+model OcrResultPage {
+  ocrResultId String @map("ocr_result_id") @db.Uuid
+  pageNumber  Int    @map("page_number")
+  text        String
+
+  result OcrResult @relation(fields: [ocrResultId], references: [id], onDelete: Restrict)
+
+  @@id([ocrResultId, pageNumber])
+  @@map("ocr_result_pages")
 }

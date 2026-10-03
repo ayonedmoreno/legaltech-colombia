@@ -1,6 +1,5 @@
 import type { PrismaClient } from "@legaltech/database";
 import type { OcrProvider } from "./ocr-provider.js";
-import type { OcrTextStore } from "./ocr-text-store.js";
 
 export interface OcrActivationResult {
   /** CLEAN documents that predate the activation: EXCLUDED (no backfill; decision OCR-A6). */
@@ -50,7 +49,6 @@ async function countViolations(db: Pick<PrismaClient, "$queryRaw">): Promise<num
 export interface OcrStartupCheck {
   prisma: PrismaClient;
   provider: OcrProvider | null;
-  textStore: OcrTextStore | null;
   pdfEnabled: boolean;
   /** Whether P7 (PDF metadata) is resolved, so a PDF may go to an external provider. */
   pdfP7Resolved: boolean;
@@ -63,9 +61,6 @@ export interface OcrStartupCheck {
 export async function assertOcrStartupPreconditions(check: OcrStartupCheck): Promise<void> {
   if (!check.provider) {
     throw new Error("OCR cannot start: no OCR provider is configured (decision P4 is open)");
-  }
-  if (!check.textStore) {
-    throw new Error("OCR cannot start: there is no OCR text storage (decision OCR-A10.5 is open)");
   }
   // A PDF never goes to a third party before P7 is resolved (decision OCR-A7).
   if (check.pdfEnabled && check.provider.external && !check.pdfP7Resolved) {

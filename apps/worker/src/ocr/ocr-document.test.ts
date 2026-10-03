@@ -5,7 +5,6 @@ import { FakeOcrRepository } from "../test-support/ocr.repository.fake.js";
 import { normalizeOcrText } from "./normalize-text.js";
 import { ocrDocument, type OcrDocumentDeps } from "./ocr-document.js";
 import { OcrProviderError, type OcrInput, type OcrProvider } from "./ocr-provider.js";
-import type { OcrTextInput, OcrTextStore } from "./ocr-text-store.js";
 
 const ID = "7b1f5c2e-0d4a-4a4e-9a38-3d5c1f0e2b11";
 const ORIGINAL = Buffer.from("original-jpeg-bytes");
@@ -22,15 +21,6 @@ class FakeProvider implements OcrProvider {
   recognize(input: OcrInput) {
     this.calls.push(input);
     return this.answer();
-  }
-}
-
-class FakeTextStore implements OcrTextStore {
-  saved: OcrTextInput[] = [];
-  fail = false;
-  async save(input: OcrTextInput): Promise<void> {
-    if (this.fail) throw new Error(`text store down: ${input.pages.join(" ")}`);
-    this.saved.push(input);
   }
 }
 
@@ -53,14 +43,12 @@ async function setup(
     contentType: "image/jpeg",
   });
   const provider = new FakeProvider(answer);
-  const textStore = new FakeTextStore();
   const events: Array<Record<string, unknown>> = [];
   let n = 0;
   const deps: OcrDocumentDeps = {
     repository,
     storage,
     provider,
-    textStore,
     imageRepresentation: "SANITIZED",
     pdfAllowed: true,
     maxAttempts: 3,
@@ -71,7 +59,7 @@ async function setup(
     newId: () => `00000000-0000-4000-8000-00000000000${++n}`,
     ...options,
   };
-  return { repository, storage, provider, textStore, events, deps, doc };
+  return { repository, storage, provider, events, deps, doc };
 }
 
 const ok =
@@ -91,15 +79,7 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     expect(t.provider.calls).toHaveLength(1);
     expect(t.provider.calls[0]!.content.equals(SANITIZED)).toBe(true);
     expect(t.provider.calls[0]!.contentType).toBe("image/jpeg");
-    expect(t.textStore.saved).toEqual([
-      {
-        executionId: "00000000-0000-4000-8000-000000000001",
-        documentId: ID,
-        caseId: t.doc.caseId,
-        pages: ["Café 1\nlínea 2", "página\n3"],
-      },
-    ]);
-    // The text and the result belong to one execution, whose id the worker generated.
+    // The result and its normalized pages are recorded together, with the id the worker generated.
     expect(t.repository.completed).toEqual([
       {
         documentId: ID,
@@ -111,6 +91,7 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
           processedSha256: sha(SANITIZED),
           pages: 2,
         },
+        pages: ["Café 1\nlínea 2", "página\n3"],
       },
     ]);
   });
@@ -142,7 +123,6 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     expect(await ocrDocument(t.deps, ID)).toBe("excluded");
 
     expect(t.provider.calls).toHaveLength(0);
-    expect(t.textStore.saved).toEqual([]);
     expect(t.repository.excluded).toEqual([ID]);
     // No execution took place: no result, no retry, no failure.
     expect(t.repository.completed).toEqual([]);
@@ -220,11 +200,11 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     const t = await setup(ok(["1", "2", "3", "4", "5", "6"]));
     expect(await ocrDocument(t.deps, ID)).toBe("failed");
     expect(t.provider.calls[0]!.maxPages).toBe(5);
-    expect(t.textStore.saved).toEqual([]);
+    expect(t.repository.completed).toEqual([]);
     expect(t.repository.failed[0]!.execution.errorCode).toBe("too_many_pages");
   });
 
-  it("classifies storage, provider and text-store failures without their messages", async () => {
+  it("classifies storage and provider failures without their messages", async () => {
     const missing = await setup(ok(["x"]));
     await missing.storage.deleteObject(missing.doc.sanitizedStorageKey!);
     expect(await ocrDocument(missing.deps, ID)).toBe("failed");
@@ -246,12 +226,14 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     }));
     expect(await ocrDocument(malformed.deps, ID)).toBe("retry");
 
-    const store = await setup(ok([SECRET]));
-    store.textStore.fail = true;
-    expect(await ocrDocument(store.deps, ID)).toBe("retry");
+    // A text PostgreSQL could never store (U+0000): permanent, never retried.
+    const nul = await setup(ok(["antes\u0000después"]));
+    expect(await ocrDocument(nul.deps, ID)).toBe("failed");
+    expect(nul.repository.failed[0]!.execution.errorCode).toBe("invalid_response");
+    expect(nul.repository.retries).toEqual([]);
 
-    const codes = [crash, malformed, store].map((t) => t.events[0]!.code);
-    expect(codes).toEqual(["provider_error", "invalid_response", "text_store_unavailable"]);
+    const codes = [crash, malformed].map((t) => t.events[0]!.code);
+    expect(codes).toEqual(["provider_error", "invalid_response"]);
   });
 
   it("never logs text, a provider's message or a file name: codes, kinds and statuses only", async () => {
@@ -292,12 +274,15 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     expect(t.repository.completed).toEqual([]);
   });
 
-  it("lets a database failure while recording the result propagate (not an OCR error)", async () => {
-    const t = await setup(ok(["x"]));
-    t.repository.markCompleted = () => Promise.reject(new Error("database unavailable"));
-    await expect(ocrDocument(t.deps, ID)).rejects.toThrow("database unavailable");
+  it("lets a failure while recording the result and its pages propagate, never logging the text", async () => {
+    const t = await setup(ok([SECRET]));
+    t.repository.markCompleted = () => Promise.reject(new Error("could not insert the pages"));
+    await expect(ocrDocument(t.deps, ID)).rejects.toThrow("could not insert the pages");
+    // Not an OCR error: no FAILED, no retry; the sweep recovers the claim after its lease.
     expect(t.repository.failed).toEqual([]);
     expect(t.repository.retries).toEqual([]);
+    expect(t.doc.ocrStatus).toBe("PROCESSING");
+    expect(JSON.stringify(t.events)).not.toContain("Gómez");
   });
 });
 

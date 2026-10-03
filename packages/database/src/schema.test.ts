@@ -16,6 +16,8 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
         "EmailVerificationToken",
         // OCR (decision OCR-A10.3): technical metadata of each execution.
         "OcrResult",
+        // OCR text per page, in PostgreSQL (decision OCR-A10.5).
+        "OcrResultPage",
         "PasswordResetToken",
         "Session",
         "User",
@@ -90,7 +92,7 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
     expect(schema.toLowerCase()).not.toContain("vector");
   });
 
-  it("keeps OCR results free of any text or entity while OCR-A10.5 and the extraction are open", () => {
+  it("keeps the text out of OCR results, and no extracted entity anywhere (OCR-A1)", () => {
     const body = (/model OcrResult {([^}]*)}/.exec(schema)?.[1] ?? "")
       .split(/\r?\n/)
       .filter((line) => !line.trim().startsWith("///"))
@@ -99,5 +101,15 @@ describe("prisma schema scope (identity slice and first Case slice)", () => {
     // No text, page content, provider message, coordinates or extracted entity.
     expect(body).not.toMatch(/text|content|message|coordinate|entit|Json/i);
     expect(schema).not.toMatch(/model ExtractedEntity/);
+  });
+
+  it("keeps an OCR page to its execution, its number and its text only (OCR-A10.4, OCR-A10.5)", () => {
+    const fields = (/model OcrResultPage {([^}]*)}/.exec(schema)?.[1] ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("///") && !line.startsWith("@@"))
+      .map((line) => line.split(/\s+/)[0]);
+    expect(fields).toEqual(["ocrResultId", "pageNumber", "text", "result"]);
+    expect(schema).toMatch(/@@id\(\[ocrResultId, pageNumber\]\)/);
   });
 });

@@ -51,8 +51,16 @@ export interface OcrRepository {
    * for a `CLEAN` document. Null when there is nothing to do: the job is then a no-op.
    */
   claim(documentId: string, leaseSeconds: number): Promise<OcrClaim | null>;
-  /** PROCESSING → COMPLETED + its OcrResult + `document.ocr_completed`. */
-  markCompleted(claim: OcrClaim, execution: CompletedExecution): Promise<boolean>;
+  /**
+   * PROCESSING → COMPLETED + its OcrResult + one OcrResultPage per page (decision OCR-A10.5) +
+   * `document.ocr_completed`, in one transaction. If any of it fails nothing is recorded and the
+   * error propagates (the claim is then recovered by the sweep).
+   */
+  markCompleted(
+    claim: OcrClaim,
+    execution: CompletedExecution,
+    pages: readonly string[],
+  ): Promise<boolean>;
   /** PROCESSING → FAILED + its OcrResult + `document.ocr_failed`. */
   markFailed(claim: OcrClaim, execution: FailedExecution): Promise<boolean>;
   /**

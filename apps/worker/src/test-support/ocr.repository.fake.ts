@@ -28,7 +28,11 @@ interface FakeDocument {
  */
 export class FakeOcrRepository implements OcrRepository {
   readonly documents = new Map<string, FakeDocument>();
-  readonly completed: Array<{ documentId: string; execution: CompletedExecution }> = [];
+  readonly completed: Array<{
+    documentId: string;
+    execution: CompletedExecution;
+    pages: readonly string[];
+  }> = [];
   readonly failed: Array<{ documentId: string; execution: FailedExecution }> = [];
   readonly retries: Array<{ documentId: string; delaySeconds: number }> = [];
   readonly excluded: string[] = [];
@@ -69,11 +73,15 @@ export class FakeOcrRepository implements OcrRepository {
     };
   }
 
-  async markCompleted(claim: OcrClaim, execution: CompletedExecution): Promise<boolean> {
+  async markCompleted(
+    claim: OcrClaim,
+    execution: CompletedExecution,
+    pages: readonly string[],
+  ): Promise<boolean> {
     const doc = this.current(claim);
     if (!doc) return false;
     doc.ocrStatus = "COMPLETED";
-    this.completed.push({ documentId: doc.id, execution });
+    this.completed.push({ documentId: doc.id, execution, pages });
     return true;
   }
 

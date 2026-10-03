@@ -2,15 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { StorageObjectNotFoundError, type StorageProvider } from "@legaltech/storage";
 import { normalizeOcrText } from "./normalize-text.js";
 import { OcrProviderError, type OcrErrorCode, type OcrProvider } from "./ocr-provider.js";
-import type { OcrTextStore } from "./ocr-text-store.js";
 import type { OcrClaim, OcrRepository, OcrRepresentation } from "./ocr.types.js";
 
 export interface OcrDocumentDeps {
   repository: OcrRepository;
   storage: StorageProvider;
   provider: OcrProvider;
-  /** Where the text goes: decision OCR-A10.5, still open (no production implementation yet). */
-  textStore: OcrTextStore;
   /** Which representation of a JPEG or PNG is processed: decision B3, set by configuration. */
   imageRepresentation: OcrRepresentation;
   /**
@@ -49,8 +46,8 @@ const MAX_RETRY_DELAY_SECONDS = 3600;
 
 /**
  * The `document.ocr` job (DATABASE_SPEC.md, "OCR del documento"): claim a CLEAN document → read
- * the representation the configuration chose → the provider → normalized text per page → the
- * text store → its OcrResult and audit event. The provider is never called without a valid claim.
+ * the representation the configuration chose → the provider → normalized text per page → its
+ * OcrResult, its pages and its audit event, in one transaction. The provider is never called without a valid claim.
  * A transient error goes back to PENDING with a delayed job while attempts are left; a permanent
  * one, or the last attempt, ends FAILED. Nothing here logs text or a provider's error message.
  */
@@ -70,7 +67,7 @@ export async function ocrDocument(deps: OcrDocumentDeps, documentId: string): Pr
   let processedSha256: string | null = null;
   let engineVersion: string | null = null;
 
-  let completed: { executionId: string; pages: number } | null = null;
+  let completed: { executionId: string; pages: string[] } | null = null;
   try {
     const content = await readRepresentation(deps.storage, claim, representation);
     processedSha256 = createHash("sha256").update(content).digest("hex");
@@ -86,17 +83,7 @@ export async function ocrDocument(deps: OcrDocumentDeps, documentId: string): Pr
     const pages = output.pages.map(normalizeOcrText);
 
     const executionId = newId();
-    try {
-      await deps.textStore.save({
-        executionId,
-        documentId: claim.documentId,
-        caseId: claim.caseId,
-        pages,
-      });
-    } catch {
-      throw new OcrProviderError("transient", "text_store_unavailable");
-    }
-    completed = { executionId, pages: pages.length };
+    completed = { executionId, pages };
   } catch (error) {
     const failure = classify(error);
     // Only the normalized code and, from a provider, its HTTP status (decision OCR-A11, point 7).
@@ -129,14 +116,19 @@ export async function ocrDocument(deps: OcrDocumentDeps, documentId: string): Pr
 
   // Outside the classification above: a database failure here is not an OCR error. It propagates,
   // pg-boss retries the job, and an abandoned claim is recovered by the sweep after its lease.
-  const recorded = await deps.repository.markCompleted(claim, {
-    id: completed.executionId,
-    engine: deps.provider.engine,
-    engineVersion,
-    representation,
-    processedSha256: processedSha256!,
-    pages: completed.pages,
-  });
+  // The result, its pages, the state and the event are written together (OCR-A10.5).
+  const recorded = await deps.repository.markCompleted(
+    claim,
+    {
+      id: completed.executionId,
+      engine: deps.provider.engine,
+      engineVersion,
+      representation,
+      processedSha256: processedSha256!,
+      pages: completed.pages.length,
+    },
+    completed.pages,
+  );
   return recorded ? "completed" : "lost";
 }
 
@@ -168,6 +160,11 @@ async function recognize(provider: OcrProvider, input: Parameters<OcrProvider["r
   const output = await provider.recognize(input);
   if (!Array.isArray(output.pages) || output.pages.some((page) => typeof page !== "string")) {
     throw new OcrProviderError("transient", "invalid_response");
+  }
+  // PostgreSQL text cannot hold U+0000: such an answer could never be stored. Retrying the same
+  // document would only give it again, so it is permanent.
+  if (output.pages.some((page) => page.includes("\u0000"))) {
+    throw new OcrProviderError("permanent", "invalid_response");
   }
   return output;
 }

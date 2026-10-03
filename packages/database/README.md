@@ -29,8 +29,11 @@ Prisma schema, migrations and database client. Only this package may import `@pr
   - `20261002100000_document_ocr_states` and `20261002100100_document_ocr`: the OCR states of a
     document, its claim columns, `ocr_results` (one immutable row per execution, never any text),
     the `document.ocr` and `document.ocr_reprocess` queues, and the worker's privileges (UPDATE of
-    the three OCR columns, INSERT only on `ocr_results`). The application role gets nothing on
-    `ocr_results` yet.
+    the three OCR columns, INSERT only on `ocr_results`).
+  - `20261003100000_ocr_result_pages`: the OCR text per page in PostgreSQL (decision OCR-A10.5),
+    with a primary key per page and a deferred consistency trigger (exactly pages 1..n per completed
+    execution, none for a failed one, nothing added later). The worker only INSERTs; the
+    application role only SELECTs `ocr_results` and `ocr_result_pages` to serve the owner.
 - The worker role is created by `infra/docker/postgres/init/01-roles.sql` on a new volume. On an
   existing development volume, create it once as the owner (`CREATE ROLE legaltech_worker LOGIN
 PASSWORD 'legaltech_worker_dev'; GRANT CONNECT ON DATABASE legaltech TO legaltech_worker; GRANT
