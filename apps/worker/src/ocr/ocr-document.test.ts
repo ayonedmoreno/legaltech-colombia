@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { MemoryStorageProvider } from "@legaltech/storage";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FakeOcrRepository } from "../test-support/ocr.repository.fake.js";
 import { normalizeOcrText } from "./normalize-text.js";
 import { ocrDocument, type OcrDocumentDeps } from "./ocr-document.js";
@@ -119,6 +119,7 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
 
   it("excludes a PDF this worker may not process, without calling the provider (OCR-A7)", async () => {
     const t = await setup(ok(["p1"]), { fileType: "PDF", pdfAllowed: false });
+    const reads = vi.spyOn(t.storage, "getObject");
 
     expect(await ocrDocument(t.deps, ID)).toBe("excluded");
 
@@ -128,6 +129,9 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     expect(t.repository.completed).toEqual([]);
     expect(t.repository.failed).toEqual([]);
     expect(t.repository.retries).toEqual([]);
+    // Nothing is logged about it: no content, no file name, no event.
+    expect(t.events).toEqual([]);
+    expect(reads).not.toHaveBeenCalled();
   });
 
   it("never excludes an image when PDFs are not allowed", async () => {
@@ -226,14 +230,19 @@ describe('ocrDocument (DATABASE_SPEC.md, "OCR del documento")', () => {
     }));
     expect(await ocrDocument(malformed.deps, ID)).toBe("retry");
 
+    // No page at all is never a completed execution (pages 1..n, OCR-A10.5).
+    const empty = await setup(ok([]));
+    expect(await ocrDocument(empty.deps, ID)).toBe("retry");
+    expect(empty.repository.completed).toEqual([]);
+
     // A text PostgreSQL could never store (U+0000): permanent, never retried.
     const nul = await setup(ok(["antes\u0000después"]));
     expect(await ocrDocument(nul.deps, ID)).toBe("failed");
     expect(nul.repository.failed[0]!.execution.errorCode).toBe("invalid_response");
     expect(nul.repository.retries).toEqual([]);
 
-    const codes = [crash, malformed].map((t) => t.events[0]!.code);
-    expect(codes).toEqual(["provider_error", "invalid_response"]);
+    const codes = [crash, malformed, empty].map((t) => t.events[0]!.code);
+    expect(codes).toEqual(["provider_error", "invalid_response", "invalid_response"]);
   });
 
   it("never logs text, a provider's message or a file name: codes, kinds and statuses only", async () => {

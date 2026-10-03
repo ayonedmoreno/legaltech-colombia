@@ -155,10 +155,17 @@ async function readRepresentation(
   return content;
 }
 
-/** The provider's answer, refused unless it is one string per page. */
+/**
+ * The provider's answer, refused unless it is one string per page, with at least one page: a
+ * completed execution always has pages 1..n (OCR-A10.5), and an empty list is never a result.
+ */
 async function recognize(provider: OcrProvider, input: Parameters<OcrProvider["recognize"]>[0]) {
   const output = await provider.recognize(input);
-  if (!Array.isArray(output.pages) || output.pages.some((page) => typeof page !== "string")) {
+  if (
+    !Array.isArray(output.pages) ||
+    output.pages.length === 0 ||
+    output.pages.some((page) => typeof page !== "string")
+  ) {
     throw new OcrProviderError("transient", "invalid_response");
   }
   // PostgreSQL text cannot hold U+0000: such an answer could never be stored. Retrying the same
