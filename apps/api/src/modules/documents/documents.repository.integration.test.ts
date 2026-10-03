@@ -451,6 +451,38 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
       }
     });
 
+    it("COMPLETED → text visible; reprocessed to FAILED → that text is no longer visible", async () => {
+      const { doc, user } = await documentWithOcr("COMPLETED", [
+        { outcome: "COMPLETED", pages: ["texto visible"] },
+      ]);
+      expect(await repository.findOwnDocumentOcr(doc.id, user.caseId, user.userId)).toEqual({
+        ocrStatus: "COMPLETED",
+        pages: [{ number: 1, text: "texto visible" }],
+      });
+
+      // A reprocessing that ends FAILED: its execution is recorded, the state follows.
+      await owner.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO ocr_results (id, document_id, outcome, engine, pages, attempts, finished_at,
+                                   error_code)
+          VALUES (${randomUUID()}::uuid, ${doc.id}::uuid, 'FAILED', 'x', NULL, 1,
+                  clock_timestamp(), 'timeout')`;
+        await tx.$executeRaw`
+          UPDATE documents SET ocr_status = 'FAILED' WHERE id = ${doc.id}::uuid`;
+      });
+      expect(await repository.findOwnDocumentOcr(doc.id, user.caseId, user.userId)).toEqual({
+        ocrStatus: "FAILED",
+        pages: [],
+      });
+    });
+
+    it("never counts OCR text toward the quota: only the stored file's size", async () => {
+      const { doc, user } = await documentWithOcr("COMPLETED", [
+        { outcome: "COMPLETED", pages: ["x".repeat(2 * 1024 * 1024), "y".repeat(1024 * 1024)] },
+      ]);
+      expect(await repository.usedBytes(user.userId)).toBe(doc.fileSize);
+    });
+
     it("finds nothing through another user, another case or an unknown id (IDOR)", async () => {
       const victim = await documentWithOcr("COMPLETED", [
         { outcome: "COMPLETED", pages: ["secreto"] },

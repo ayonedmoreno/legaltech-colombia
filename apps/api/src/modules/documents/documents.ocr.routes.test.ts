@@ -111,6 +111,30 @@ describe("GET /api/cases/:caseId/documents/:documentId/ocr", () => {
     });
   });
 
+  it("COMPLETED → text visible; then FAILED after a reprocessing → text no longer visible", async () => {
+    const testApp = await buildTestApp();
+    const doc = await ownerWithDocument(testApp, "COMPLETED", [
+      { outcome: "COMPLETED", pages: ["texto visible"] },
+    ]);
+    const before = await read(testApp, doc.owner, doc.caseId, doc.documentId);
+    expect(before.json()).toEqual({
+      ocrStatus: "COMPLETED",
+      pages: [{ number: 1, text: "texto visible" }],
+    });
+
+    testApp.documentsRepository.ocrExecutions.get(doc.documentId)!.push({
+      outcome: "FAILED",
+      pages: [],
+    });
+    testApp.documentsRepository.documents.get(doc.documentId)!.ocrStatus = "FAILED";
+
+    const after = await read(testApp, doc.owner, doc.caseId, doc.documentId);
+    expect(after.statusCode).toBe(200);
+    expect(after.headers["cache-control"]).toBe("no-store");
+    expect(after.json()).toEqual({ ocrStatus: "FAILED", pages: [] });
+    expect(after.body).not.toContain("texto visible");
+  });
+
   it.each(["NOT_STARTED", "PENDING", "PROCESSING", "FAILED", "EXCLUDED", "NOT_APPLICABLE"])(
     "answers 200 with no text while the OCR is %s, even if an earlier execution completed",
     async (state) => {
