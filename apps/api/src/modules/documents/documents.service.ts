@@ -4,6 +4,7 @@ import {
   DOCUMENT_QUOTA_BYTES,
   type Document,
   type DocumentDownloadResponse,
+  type DocumentOcrResponse,
 } from "@legaltech/contracts";
 import { HttpError } from "../../common/http-error.js";
 import type { StorageProvider } from "@legaltech/storage";
@@ -243,6 +244,27 @@ export class DocumentsService {
       expiresInSeconds,
     });
     return { url, expiresAt: expiresAt.toISOString() };
+  }
+
+  /**
+   * `GET /api/cases/:caseId/documents/:documentId/ocr` (decisions OCR-A3, OCR-A12, OCR-A13): the OCR
+   * state of one of the user's documents and, only while it is COMPLETED, the text of the current
+   * execution, per page. Unverified and untrusted text: returned as data, never logged. Anyone but
+   * the owner gets the same 404 as for an unknown document.
+   */
+  async readDocumentOcr(
+    current: CurrentUserResult,
+    caseId: string,
+    documentId: string,
+  ): Promise<DocumentOcrResponse> {
+    await this.ownCase(current, caseId, "document:read_ocr");
+    const ocr = await this.options.repository.findOwnDocumentOcr(
+      documentId,
+      caseId,
+      current.user.id,
+    );
+    if (!ocr) throw notFound();
+    return { ocrStatus: ocr.ocrStatus, pages: ocr.pages };
   }
 
   /**

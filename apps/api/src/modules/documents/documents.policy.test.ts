@@ -79,4 +79,20 @@ describe("documents policy — first Documents slice (ADR-003)", () => {
       expect(can(actor("ADMIN"), action, { caseOwnerId: OTHER }).allowed).toBe(false);
     }
   });
+
+  it("lets only the USER owner read the OCR text (decision OCR-A12)", () => {
+    expect(can(actor("USER"), "document:read_ocr", { caseOwnerId: SELF })).toEqual({
+      allowed: true,
+    });
+    expect(can(actor("USER"), "document:read_ocr", { caseOwnerId: OTHER })).toEqual({
+      allowed: false,
+      reason: "not_owner",
+    });
+    for (const role of ["PROFESSIONAL", "ADMIN", "SUPER_ADMIN"] as const) {
+      expect(can(actor(role), "document:read_ocr", { caseOwnerId: SELF }).allowed).toBe(false);
+    }
+    expect(
+      can(actor("USER", "SUSPENDED"), "document:read_ocr", { caseOwnerId: SELF }).allowed,
+    ).toBe(false);
+  });
 });

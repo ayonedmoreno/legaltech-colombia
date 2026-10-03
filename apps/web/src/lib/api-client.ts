@@ -6,6 +6,7 @@ import type {
   CsrfResponse,
   Document,
   DocumentDownloadResponse,
+  DocumentOcrResponse,
   DocumentResponse,
   LoginRequest,
   LoginResponse,
@@ -199,6 +200,22 @@ export function getDocumentDownloadUrl(
   return request<DocumentDownloadResponse>(
     fetchImpl,
     `/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/download`,
+    { method: "GET" },
+  );
+}
+
+/**
+ * The OCR of one of the user's documents (the API authorizes it): its state and, only when it is
+ * COMPLETED, the unverified text per page. The text is data: it is rendered as text, never as HTML.
+ */
+export function getDocumentOcr(
+  caseId: string,
+  documentId: string,
+  fetchImpl: Fetch = fetch,
+): Promise<ApiResult<DocumentOcrResponse>> {
+  return request<DocumentOcrResponse>(
+    fetchImpl,
+    `/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/ocr`,
     { method: "GET" },
   );
 }

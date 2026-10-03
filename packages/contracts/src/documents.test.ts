@@ -5,6 +5,7 @@ import {
   DOCUMENT_OCR_REPROCESS_QUEUE,
   documentFileNameSchema,
   documentOcrJobSchema,
+  documentOcrResponseSchema,
   documentOcrReprocessJobSchema,
   documentOcrStatusSchema,
   documentParamsSchema,
@@ -119,5 +120,26 @@ describe("document contracts", () => {
     expect(schema.safeParse({ documentId: id }).success).toBe(true);
     expect(schema.safeParse({ documentId: "x" }).success).toBe(false);
     expect(schema.safeParse({ documentId: id, text: "..." }).success).toBe(false);
+  });
+
+  it("describes the OCR answer: its state and, only as text, the pages of one execution", () => {
+    expect(
+      documentOcrResponseSchema.safeParse({
+        ocrStatus: "COMPLETED",
+        pages: [{ number: 1, text: "<script>alert(1)</script>" }],
+      }).success,
+    ).toBe(true);
+    expect(documentOcrResponseSchema.safeParse({ ocrStatus: "FAILED", pages: [] }).success).toBe(
+      true,
+    );
+    expect(
+      documentOcrResponseSchema.safeParse({
+        ocrStatus: "COMPLETED",
+        pages: [{ number: 0, text: "x" }],
+      }).success,
+    ).toBe(false);
+    expect(documentOcrResponseSchema.safeParse({ ocrStatus: "DONE", pages: [] }).success).toBe(
+      false,
+    );
   });
 });

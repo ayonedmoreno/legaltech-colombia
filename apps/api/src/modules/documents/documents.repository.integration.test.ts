@@ -21,6 +21,8 @@ import type {
  */
 const databaseUrl = process.env.INTEGRATION_DATABASE_URL;
 const workerDatabaseUrl = process.env.INTEGRATION_WORKER_DATABASE_URL;
+/** Test-only: writes the OCR results the worker would, which the application role cannot. */
+const ownerDatabaseUrl = process.env.INTEGRATION_OWNER_DATABASE_URL;
 
 /** The created document, or a failure naming what came back instead. */
 function created(result: CreateDocumentResult): DocumentRecord {
@@ -372,6 +374,98 @@ describe.skipIf(!databaseUrl)("PrismaDocumentsRepository (PostgreSQL integration
       expect(await jobs("document.ocr_reprocess", doc.id)).toBe(1);
       // Its own queue: never the security treatment's.
       expect(await jobs("document.reprocess", doc.id)).toBe(0);
+    });
+  });
+
+  describe.skipIf(!ownerDatabaseUrl)("OCR text of one's own documents (OCR-A10.5, OCR-A12)", () => {
+    let owner: PrismaClient;
+
+    beforeAll(() => {
+      owner = createPrismaClient(ownerDatabaseUrl!);
+    });
+    afterAll(async () => {
+      await owner?.$disconnect();
+    });
+
+    /** A CLEAN document with the given OCR state and executions (oldest first), as the worker. */
+    async function documentWithOcr(
+      ocrStatus: "COMPLETED" | "FAILED" | "PENDING",
+      executions: Array<{ outcome: "COMPLETED" | "FAILED"; pages: string[] }>,
+    ) {
+      const user = await userWithCase();
+      const doc = created(await repository.createDocument(input(user)));
+      await owner.$executeRaw`
+        UPDATE documents SET status = 'CLEAN', ocr_status = ${ocrStatus}::document_ocr_status
+        WHERE id = ${doc.id}::uuid`;
+      let minute = 0;
+      for (const execution of executions) {
+        const id = randomUUID();
+        minute += 1;
+        await owner.$transaction(async (tx) => {
+          await tx.$executeRaw`
+            INSERT INTO ocr_results (id, document_id, outcome, engine, representation,
+                                     processed_sha256, pages, attempts, finished_at, error_code)
+            VALUES (${id}::uuid, ${doc.id}::uuid, ${execution.outcome}::ocr_result_outcome, 'x',
+                    ${execution.outcome === "COMPLETED" ? "SANITIZED" : null}::ocr_representation,
+                    ${execution.outcome === "COMPLETED" ? "d".repeat(64) : null},
+                    ${execution.outcome === "COMPLETED" ? execution.pages.length : null}, 1,
+                    timestamptz '2026-10-03 10:00:00+00' + make_interval(mins => ${minute}::int),
+                    ${execution.outcome === "FAILED" ? "timeout" : null})`;
+          for (const [index, text] of execution.pages.entries()) {
+            await tx.$executeRaw`
+              INSERT INTO ocr_result_pages (ocr_result_id, page_number, text)
+              VALUES (${id}::uuid, ${index + 1}, ${text})`;
+          }
+        });
+      }
+      return { doc, user };
+    }
+
+    it("reads the pages of the latest completed execution only, in order and verbatim", async () => {
+      const hostile = "<img src=x onerror=alert(1)>'); DROP TABLE cases; --";
+      const { doc, user } = await documentWithOcr("COMPLETED", [
+        { outcome: "COMPLETED", pages: ["antigua"] },
+        { outcome: "FAILED", pages: [] },
+        { outcome: "COMPLETED", pages: ["uno", hostile, "tres"] },
+      ]);
+
+      expect(await repository.findOwnDocumentOcr(doc.id, user.caseId, user.userId)).toEqual({
+        ocrStatus: "COMPLETED",
+        pages: [
+          { number: 1, text: "uno" },
+          { number: 2, text: hostile },
+          { number: 3, text: "tres" },
+        ],
+      });
+    });
+
+    it("never returns earlier text when the OCR is not COMPLETED now", async () => {
+      for (const state of ["FAILED", "PENDING"] as const) {
+        const { doc, user } = await documentWithOcr(state, [
+          { outcome: "COMPLETED", pages: ["texto de antes"] },
+        ]);
+        expect(await repository.findOwnDocumentOcr(doc.id, user.caseId, user.userId)).toEqual({
+          ocrStatus: state,
+          pages: [],
+        });
+      }
+    });
+
+    it("finds nothing through another user, another case or an unknown id (IDOR)", async () => {
+      const victim = await documentWithOcr("COMPLETED", [
+        { outcome: "COMPLETED", pages: ["secreto"] },
+      ]);
+      const attacker = await userWithCase();
+
+      expect(
+        await repository.findOwnDocumentOcr(victim.doc.id, victim.user.caseId, attacker.userId),
+      ).toBeNull();
+      expect(
+        await repository.findOwnDocumentOcr(victim.doc.id, attacker.caseId, attacker.userId),
+      ).toBeNull();
+      expect(
+        await repository.findOwnDocumentOcr(randomUUID(), victim.user.caseId, victim.user.userId),
+      ).toBeNull();
     });
   });
 });

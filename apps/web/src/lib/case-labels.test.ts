@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CASE_STATUS_LABELS,
   CASE_TYPES,
+  DOCUMENT_OCR_STATUS_LABELS,
   DOCUMENT_STATUS_LABELS,
   formatFileSize,
   isDownloadable,
@@ -66,5 +67,18 @@ describe("document security treatment in the UI", () => {
     >;
     expect(statuses).toHaveLength(6);
     expect(statuses.filter(isDownloadable)).toEqual(["CLEAN"]);
+  });
+
+  it("labels every OCR state, telling the definitive exclusion from the reversible one", () => {
+    expect(Object.keys(DOCUMENT_OCR_STATUS_LABELS).sort()).toEqual([
+      "COMPLETED",
+      "EXCLUDED",
+      "FAILED",
+      "NOT_APPLICABLE",
+      "NOT_STARTED",
+      "PENDING",
+      "PROCESSING",
+    ]);
+    expect(DOCUMENT_OCR_STATUS_LABELS.EXCLUDED).not.toBe(DOCUMENT_OCR_STATUS_LABELS.NOT_APPLICABLE);
   });
 });

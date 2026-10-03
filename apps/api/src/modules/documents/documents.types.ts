@@ -44,6 +44,15 @@ export type CreateDocumentResult =
   /** The user's documents would exceed the quota with this one. */
   | { kind: "quota_exceeded" };
 
+/**
+ * The OCR of one of the user's documents (decision OCR-A12): its state and, only while it is
+ * COMPLETED, the pages of the current execution (the latest completed one). Untrusted text.
+ */
+export interface DocumentOcrRead {
+  ocrStatus: DocumentOcrStatus;
+  pages: Array<{ number: number; text: string }>;
+}
+
 export interface RequestReprocessInput {
   documentId: string;
   caseId: string;
@@ -80,6 +89,16 @@ export interface DocumentsRepository {
    * the policy, justified and audited (ADR-003, ADMIN). Never used for a user's own requests.
    */
   findDocumentForAdministration(documentId: string): Promise<DocumentRecord | null>;
+  /**
+   * The OCR of one document of one of the user's cases, or null (unknown, other case, other owner).
+   * The pages come from the latest COMPLETED execution and only while the document's OCR is
+   * COMPLETED; otherwise `pages` is empty (never the text of an earlier execution).
+   */
+  findOwnDocumentOcr(
+    documentId: string,
+    caseId: string,
+    userId: string,
+  ): Promise<DocumentOcrRead | null>;
   /** In one transaction: the request's audit event and its `document.reprocess` job. */
   requestReprocess(input: RequestReprocessInput): Promise<void>;
   /**

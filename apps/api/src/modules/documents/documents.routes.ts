@@ -1,6 +1,7 @@
 import type {
   AcceptedResponse,
   DocumentDownloadResponse,
+  DocumentOcrResponse,
   DocumentResponse,
   DocumentsResponse,
 } from "@legaltech/contracts";
@@ -124,6 +125,19 @@ export const documentsRoutes: FastifyPluginAsync<DocumentsRouteDeps> = async (
       params.data.documentId,
     );
     // A capability URL: never cached.
+    return reply.header("cache-control", "no-store").send(body);
+  });
+
+  app.get("/:caseId/documents/:documentId/ocr", async (request, reply) => {
+    const current = await requireCurrentUser(request, authService);
+    const params = documentParamsSchema.safeParse(request.params);
+    if (!params.success) throw notFound();
+    const body: DocumentOcrResponse = await documentsService.readDocumentOcr(
+      current,
+      params.data.caseId,
+      params.data.documentId,
+    );
+    // The text of a personal document: never cached.
     return reply.header("cache-control", "no-store").send(body);
   });
 };

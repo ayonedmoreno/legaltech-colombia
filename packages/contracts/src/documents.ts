@@ -56,6 +56,27 @@ export type DocumentResponse = z.infer<typeof documentResponseSchema>;
 export const documentsResponseSchema = z.object({ documents: z.array(documentSchema) });
 export type DocumentsResponse = z.infer<typeof documentsResponseSchema>;
 
+/**
+ * One page of the OCR text of a document (decision OCR-A10.4): unverified and untrusted text
+ * (OCR-A3, OCR-A13), always rendered as text, never as HTML or instructions.
+ */
+export const documentOcrPageSchema = z.object({
+  number: z.number().int().positive(),
+  text: z.string(),
+});
+export type DocumentOcrPage = z.infer<typeof documentOcrPageSchema>;
+
+/**
+ * Answer of `GET /api/cases/:caseId/documents/:documentId/ocr` (decision OCR-A12): the OCR state
+ * and, only while it is `COMPLETED`, the text of the current execution (the latest completed one).
+ * An empty `pages` means "no text available in this state", never a document without pages.
+ */
+export const documentOcrResponseSchema = z.object({
+  ocrStatus: documentOcrStatusSchema,
+  pages: z.array(documentOcrPageSchema),
+});
+export type DocumentOcrResponse = z.infer<typeof documentOcrResponseSchema>;
+
 /** Answer of the download endpoint: a short-lived presigned URL of the private storage. */
 export const documentDownloadResponseSchema = z.object({
   url: z.string().url(),

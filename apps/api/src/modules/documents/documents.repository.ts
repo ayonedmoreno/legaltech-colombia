@@ -5,6 +5,7 @@ import { auditLogData, loginLockKey } from "../auth/auth.repository.js";
 import type {
   CreateDocumentInput,
   CreateDocumentResult,
+  DocumentOcrRead,
   DocumentRecord,
   DocumentsRepository,
   RequestReprocessInput,
@@ -87,6 +88,41 @@ export class PrismaDocumentsRepository implements DocumentsRepository {
     userId: string,
   ): Promise<DocumentRecord | null> {
     return this.prisma.document.findFirst({ where: { id: documentId, caseId, case: { userId } } });
+  }
+
+  async findOwnDocumentOcr(
+    documentId: string,
+    caseId: string,
+    userId: string,
+  ): Promise<DocumentOcrRead | null> {
+    const document = await this.prisma.document.findFirst({
+      where: { id: documentId, caseId, case: { userId } },
+      select: { ocrStatus: true },
+    });
+    if (!document) return null;
+    if (document.ocrStatus !== "COMPLETED") return { ocrStatus: document.ocrStatus, pages: [] };
+    // The ownership and the COMPLETED state are checked again in the same statement that reads the
+    // text, and only the latest completed execution is read (decisions OCR-A10.3 and OCR-A12).
+    const rows = await this.prisma.$queryRaw<Array<{ page_number: number; text: string }>>`
+      SELECT p.page_number, p.text
+      FROM ocr_result_pages p
+      WHERE p.ocr_result_id = (
+        SELECT r.id
+        FROM ocr_results r
+        JOIN documents d ON d.id = r.document_id
+        JOIN cases c ON c.id = d.case_id
+        WHERE r.document_id = ${documentId}::uuid
+          AND d.case_id = ${caseId}::uuid
+          AND c.user_id = ${userId}::uuid
+          AND d.ocr_status = 'COMPLETED'
+          AND r.outcome = 'COMPLETED'
+        ORDER BY r.finished_at DESC, r.id DESC
+        LIMIT 1)
+      ORDER BY p.page_number`;
+    return {
+      ocrStatus: "COMPLETED",
+      pages: rows.map((row) => ({ number: row.page_number, text: row.text })),
+    };
   }
 
   async findDocumentForAdministration(documentId: string): Promise<DocumentRecord | null> {

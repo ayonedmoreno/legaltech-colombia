@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCase,
   getDocumentDownloadUrl,
+  getDocumentOcr,
   uploadDocument,
   forgotPassword,
   login,
@@ -325,5 +326,23 @@ describe("getDocumentDownloadUrl", () => {
 
     expect(await getDocumentDownloadUrl("c1", "d1", fetchImpl)).toEqual({ ok: true, data: answer });
     expect(fetchImpl.mock.calls[0]![0]).toBe("/api/cases/c1/documents/d1/download");
+  });
+});
+
+describe("getDocumentOcr", () => {
+  it("reads the OCR of one document through the API, with its ids encoded in the path", async () => {
+    const answer = { ocrStatus: "COMPLETED", pages: [{ number: 1, text: "<b>texto</b>" }] };
+    const fetchImpl = vi.fn().mockResolvedValue(json(200, answer));
+
+    expect(await getDocumentOcr("c1", "d/1?x", fetchImpl)).toEqual({ ok: true, data: answer });
+    expect(fetchImpl.mock.calls[0]![0]).toBe("/api/cases/c1/documents/d%2F1%3Fx/ocr");
+    expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: "GET" });
+  });
+
+  it("returns the API's error for a document the user cannot see", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(apiError(404, "NOT_FOUND", "Recurso no encontrado."));
+    expect(await getDocumentOcr("c1", "d1", fetchImpl)).toMatchObject({ ok: false, status: 404 });
   });
 });

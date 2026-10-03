@@ -3,6 +3,7 @@ import type { FakeCasesRepository } from "../cases/cases.repository.fake.js";
 import type {
   CreateDocumentInput,
   CreateDocumentResult,
+  DocumentOcrRead,
   DocumentRecord,
   DocumentsRepository,
   RequestReprocessInput,
@@ -23,6 +24,14 @@ export class FakeDocumentsRepository implements DocumentsRepository {
   readonly enqueuedReprocesses: string[] = [];
   /** Documents whose `document.ocr_reprocess` job was enqueued (with the request's event). */
   readonly enqueuedOcrReprocesses: string[] = [];
+  /**
+   * OCR executions per document, oldest first, as the worker records them (OcrResult +
+   * OcrResultPage); only completed ones carry pages.
+   */
+  readonly ocrExecutions = new Map<
+    string,
+    Array<{ outcome: "COMPLETED" | "FAILED"; pages: string[] }>
+  >();
   /** Test hook: stands in for PostgreSQL's clock. */
   clock: () => Date = () => new Date();
 
@@ -84,6 +93,23 @@ export class FakeDocumentsRepository implements DocumentsRepository {
     if (!document || document.caseId !== caseId) return null;
     if (this.cases.cases.get(caseId)?.userId !== userId) return null;
     return { ...document };
+  }
+
+  async findOwnDocumentOcr(
+    documentId: string,
+    caseId: string,
+    userId: string,
+  ): Promise<DocumentOcrRead | null> {
+    const document = await this.findOwnDocument(documentId, caseId, userId);
+    if (!document) return null;
+    if (document.ocrStatus !== "COMPLETED") return { ocrStatus: document.ocrStatus, pages: [] };
+    const current = (this.ocrExecutions.get(documentId) ?? [])
+      .filter((execution) => execution.outcome === "COMPLETED")
+      .at(-1);
+    return {
+      ocrStatus: "COMPLETED",
+      pages: (current?.pages ?? []).map((text, index) => ({ number: index + 1, text })),
+    };
   }
 
   async findDocumentForAdministration(documentId: string): Promise<DocumentRecord | null> {

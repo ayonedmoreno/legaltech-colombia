@@ -16,6 +16,7 @@ import { getCaseDocuments, getOwnCase } from "../../../lib/cases";
 import { SESSION_COOKIE } from "../../../lib/session";
 import { SessionKeeper } from "../../panel/session-keeper";
 import { DocumentDownload } from "./document-download";
+import { DocumentOcr } from "./document-ocr";
 import { DocumentUpload } from "./document-upload";
 
 export const metadata: Metadata = { title: "Caso" };
@@ -86,6 +87,13 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
                           {formatFileSize(document.fileSize)} · {formatDate(document.createdAt)} ·{" "}
                           {DOCUMENT_STATUS_LABELS[document.status]}
                         </span>
+                        {isDownloadable(document.status) ? (
+                          <DocumentOcr
+                            caseId={id}
+                            documentId={document.id}
+                            ocrStatus={document.ocrStatus}
+                          />
+                        ) : null}
                       </span>
                       {isDownloadable(document.status) ? (
                         <DocumentDownload caseId={id} documentId={document.id} />

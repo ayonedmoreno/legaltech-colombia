@@ -3,6 +3,7 @@ import type {
   CaseStatus,
   CaseType,
   DocumentFileType,
+  DocumentOcrStatus,
   DocumentStatus,
 } from "@legaltech/contracts";
 
@@ -84,6 +85,24 @@ export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
   INFECTED: "Bloqueado: se detectó una amenaza",
   SCAN_FAILED: "Bloqueado: no se pudo analizar",
 };
+
+/**
+ * The OCR state of a document (DATABASE_SPEC.md, "OCR del documento"), for its owner. The text is
+ * only ever shown with the warning that it is unverified (OCR_UNVERIFIED_WARNING).
+ */
+export const DOCUMENT_OCR_STATUS_LABELS: Record<DocumentOcrStatus, string> = {
+  NOT_STARTED: "Texto no procesado",
+  PENDING: "Texto pendiente de procesar",
+  PROCESSING: "Procesando el texto",
+  COMPLETED: "Texto disponible",
+  FAILED: "No se pudo obtener el texto",
+  NOT_APPLICABLE: "Sin procesamiento de texto",
+  EXCLUDED: "Sin procesamiento de texto por ahora",
+};
+
+/** Always next to OCR text (decision OCR-A3): it is unverified and may contain errors. */
+export const OCR_UNVERIFIED_WARNING =
+  "Texto obtenido automáticamente a partir del documento. No está verificado y puede contener errores.";
 
 /** Only a document that passed its security treatment can be downloaded (the API enforces it). */
 export function isDownloadable(status: DocumentStatus): boolean {
