@@ -263,6 +263,28 @@ description: Registro de las decisiones importantes de LegalTech Colombia (fecha
   - OCR-A10.5, P4 y B1–B8.
 - **Ref.:** commit de la implementación del OCR (2026-10-02); red-team del OCR, 34/34 mutaciones detectadas.
 
+### DEC-25 · 2026-10-03 · OCR-A10.5: texto en PostgreSQL; el texto no cuenta para la cuota
+
+- **Problema:** dónde guardar el texto OCR y si cuenta dentro de los 100 MiB (OCR-A10.5), con los datos de la ronda 1 (B8).
+- **Decisión:**
+  - el texto se guarda en PostgreSQL, con este modelo: `Document → OcrResult → OcrResultPage(pageNumber, text)`;
+  - una fila de `OcrResult` por ejecución y varias páginas por ejecución; se conserva el historial y el resultado terminado no cambia;
+  - el worker solo inserta, sin SELECT, UPDATE, DELETE ni `RETURNING`, y con los UUID generados antes del INSERT;
+  - la API lee, siempre tras comprobar propietario → caso → documento;
+  - el texto OCR **no** cuenta en los 100 MiB, que siguen siendo solo los archivos almacenados.
+- **Implementación:**
+  - tabla `ocr_result_pages`: clave primaria `(ocr_result_id, page_number)` y trigger diferido de coherencia (`SECURITY DEFINER`, solo comprueba);
+  - escritura atómica con el resultado;
+  - `GET …/ocr` solo para el `USER` propietario, con 404 para el resto;
+  - vista web con el texto escapado y el aviso de no verificado;
+  - un texto con U+0000 es una respuesta inválida permanente.
+- **No decidido:**
+  - el límite de páginas (**PENDIENTE DE DECISIÓN B7**);
+  - P4;
+  - el timestamp de solicitud (contradicción OCR-A10.6/OCR-A12, que no se resuelve);
+  - la retención y la eliminación del texto (decisión jurídica).
+- **Ref.:** `ARCHITECTURE_REPORT.md` §5; `DATABASE_SPEC.md` 0.10; `API_SPEC.md` 0.11; `SECURITY_SPEC.md` 0.10; migración `ocr_result_pages`.
+
 ---
 
 ## Decisiones pendientes conocidas (no tomar por inferencia)

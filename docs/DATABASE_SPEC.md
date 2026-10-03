@@ -1,8 +1,8 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.9 (OCR: primera parte implementada; Fase 3)
+**Versión:** 0.10 (OCR: texto por página en PostgreSQL y lectura por el propietario; Fase 3)
 **Fecha:** 2026-10-01
-**Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28). El diseño del OCR (sección «OCR del documento») se aprobó el 2026-10-01; su primera parte está implementada desde el 2026-10-02 y la sección distingue lo implementado de lo pendiente.
+**Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28). El diseño del OCR (sección «OCR del documento») se aprobó el 2026-10-01; está implementado en parte (2026-10-02 y 2026-10-03) y la sección distingue lo implementado de lo pendiente.
 **Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
 **Fuera de alcance:** `Infraction`, `Authority`, `DocumentVersion`, `Payment`, `LegalSource`, `Professional` y demás entidades de `PROJECT_SPEC.md` s.15. Se añaden por rebanadas aprobadas antes de cada fase.
 
@@ -313,18 +313,18 @@ pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgbo
 
 Diseño aprobado por el responsable del producto el 2026-10-01 (decisiones OCR-A1 a OCR-A15, registradas en `ARCHITECTURE_REPORT.md` §5).
 
-**Estado de implementación (2026-10-02):**
+**Estado de implementación (2026-10-03):**
 - **Implementado:**
-  - los estados de `ocr_status`, las columnas de reclamo `ocr_attempts` y `ocr_started_at`, la tabla `ocr_results` y las colas `document.ocr` y `document.ocr_reprocess` (migraciones `document_ocr_states` y `document_ocr`), con los permisos del worker (abajo);
-  - el estado escrito junto al resultado del antivirus, el reclamo, el resultado, el reintento, el barrido, el reprocesamiento ADMIN y la activación con su invariante;
+  - los estados de `ocr_status`, las columnas de reclamo `ocr_attempts` y `ocr_started_at`, las tablas `ocr_results` y `ocr_result_pages` y las colas `document.ocr` y `document.ocr_reprocess` (migraciones `document_ocr_states`, `document_ocr` y `ocr_result_pages`), con sus permisos (abajo);
+  - el estado escrito junto al resultado del antivirus, el reclamo, el resultado con su texto por página en la misma transacción, el reintento, el barrido, el reprocesamiento ADMIN y la activación con su invariante;
+  - la lectura del texto por el propietario (`GET /api/cases/:caseId/documents/:documentId/ocr`) y su visualización en la web, con el aviso de texto no verificado;
   - todo detrás de la interfaz `OcrProvider`, probado con proveedores falsos.
 - **El OCR está desactivado por defecto (`OCR_ENABLED=false`) y no puede activarse todavía:**
-  - no hay proveedor (P4) ni almacenamiento del texto (OCR-A10.5), y el worker se niega a arrancar con el OCR activado mientras falte cualquiera de los dos;
+  - no hay proveedor (P4), y el worker se niega a arrancar con el OCR activado sin él;
   - con el OCR desactivado, el tratamiento antivirus se comporta igual que antes y `ocr_status` queda en `NOT_STARTED`.
 - **Pendiente:**
-  - el almacenamiento del texto (OCR-A10.5, tras la medición B8);
-  - la lectura del texto por el propietario (`document:read_ocr` y su endpoint), que depende de él;
-  - el proveedor (P4), y los valores de B5, B6 y B7.
+  - el proveedor (P4);
+  - los valores de B5, B6 y B7. En particular, el límite de páginas por documento (`OCR_MAX_PAGES`) está **PENDIENTE DE DECISIÓN B7**: la ronda 1 lo midió, pero no lo decide.
 
 Lo que depende de la evaluación de proveedores (`docs/ocr-provider-evaluation.md`) queda marcado como abierto y sin valores.
 
@@ -362,7 +362,26 @@ Lo que depende de la evaluación de proveedores (`docs/ocr-provider-evaluation.m
   Quedan abiertos: la confianza (tras P4), los valores de la representación (B3/B4) y la tabla de códigos de error (tras P4).
 - **Texto (OCR-A10.4):** se guarda **por página**, sin coordenadas ni la salida JSON del proveedor, con solo normalización técnica (Unicode NFC y finales de línea). El texto de ejecuciones anteriores **se conserva provisionalmente** hasta que exista una política de retención y eliminación; no supone una retención indefinida aprobada.
 - **Ejecución vigente (OCR-A12):** la última ejecución `COMPLETED`. El texto solo se entrega si `documents.ocr_status = COMPLETED`: tras un reprocesamiento `FAILED` no se muestra el texto anterior.
-- **Ubicación del texto (OCR-A10.5): ABIERTO.** En PostgreSQL o como objeto privado en el storage, y si cuenta para la cuota. Se decide con la medición B8.
+- **Ubicación del texto (OCR-A10.5, decidido el 2026-10-03): PostgreSQL**, en la tabla `ocr_result_pages` (abajo). Resultado → páginas: una fila de `ocr_results` por ejecución y una fila de `ocr_result_pages` por página de esa ejecución.
+- **Cuota (decisión del 2026-10-03):** el texto OCR **no cuenta** dentro de los 100 MiB. La cuota sigue siendo solo la suma de los archivos almacenados (`file_size`). El texto queda acotado por los límites operativos, como el de páginas por documento (pendiente de B7).
+
+**`ocr_result_pages`** (OCR-A10.5):
+
+| Columna | Tipo | Restricciones |
+|---|---|---|
+| `ocr_result_id` | uuid | NOT NULL, FK `ocr_results(id)` ON DELETE RESTRICT |
+| `page_number` | integer | NOT NULL, CHECK `page_number >= 1` |
+| `text` | text | NOT NULL (texto de la página tras la normalización técnica; no verificado y no confiable) |
+
+- **Clave primaria `(ocr_result_id, page_number)`:** una página nunca se guarda dos veces en una ejecución.
+- **Coherencia, comprobada al confirmar la transacción** con un trigger diferido (`ocr_result_pages_consistent`):
+  - una ejecución `COMPLETED` tiene exactamente las páginas 1..n, siendo n `ocr_results.pages`;
+  - una `FAILED` no tiene ninguna;
+  - no se pueden añadir páginas a una ejecución ya terminada.
+
+  La función es `SECURITY DEFINER` para poder contar las páginas como propietario, ya que el worker no puede leer esas tablas. No da ningún permiso a nadie y no se puede llamar directamente.
+- **Escritura:** el worker inserta el `OcrResult`, sus páginas, el estado `COMPLETED` y el evento sin contenido en **una sola transacción**, primero comprobando su reclamo. Si la escritura de las páginas falla, no se registra nada: el documento sigue `PROCESSING` y lo recupera el barrido.
+- **Lectura:** solo la API, para el propietario: la cadena documento → caso → propietario y el estado `COMPLETED` se comprueban en la misma sentencia que lee las páginas de la última ejecución completada.
 - **Activación (OCR-A11, OCR-A12):** activar el OCR es un paso explícito del propietario (un script, no una migración automática), separado del despliegue:
   - procedimiento: detener el worker → ejecutar el script → verificar el invariante → arrancar el worker con el OCR activado;
   - el script solo cambia filas en `NOT_STARTED`: `CLEAN` → `EXCLUDED` e `INFECTED` → `NOT_APPLICABLE`. `SCAN_FAILED`, `PENDING_SCAN`, `SCANNING` y `UPLOADED` siguen en `NOT_STARTED`;
@@ -373,13 +392,13 @@ Lo que depende de la evaluación de proveedores (`docs/ocr-provider-evaluation.m
   - `legaltech_worker` (**implementado**):
     - UPDATE de `ocr_status`, `ocr_attempts` y `ocr_started_at` en `documents`;
     - **solo INSERT** en `ocr_results`, **sin SELECT y sin `RETURNING`**: el identificador de la ejecución lo genera el worker antes del INSERT, que se escribe en SQL explícito, como el de `audit_logs`, porque `create()` de Prisma genera `INSERT … RETURNING`;
-    - la clave foránea hacia `documents` no requiere más permisos;
-    - la tabla de texto, si OCR-A10.5 la crea, seguirá el mismo criterio.
-  - `legaltech_app`: **ningún permiso en `ocr_results` todavía**. El SELECT previsto (y el del texto), siempre por la cadena documento → caso → propietario, se concederá con el endpoint de lectura, que depende de OCR-A10.5.
-  - Nadie tiene UPDATE ni DELETE en `ocr_results`.
-- **Migraciones** (implementadas): los valores de `document_ocr_status` en una migración **separada** (`document_ocr_states`), porque un valor añadido con `ALTER TYPE … ADD VALUE` no puede usarse en la misma transacción (mismo patrón que `document_scan_states`). Después, `document_ocr`: columnas de reclamo, `ocr_results`, las dos colas y los GRANT exactos.
+    - **solo INSERT** en `ocr_result_pages`, con el mismo criterio: sin SELECT, sin UPDATE, sin DELETE y sin `RETURNING`;
+    - las claves foráneas no requieren más permisos.
+  - `legaltech_app` (**implementado**): **solo SELECT** en `ocr_results` y `ocr_result_pages`, para servir el texto al propietario. Nunca escribe en ellas.
+  - Nadie tiene UPDATE ni DELETE en `ocr_results` ni en `ocr_result_pages`.
+- **Migraciones** (implementadas): los valores de `document_ocr_status` en una migración **separada** (`document_ocr_states`), porque un valor añadido con `ALTER TYPE … ADD VALUE` no puede usarse en la misma transacción (mismo patrón que `document_scan_states`). Después, `document_ocr`: columnas de reclamo, `ocr_results`, las dos colas y los GRANT exactos. Por último, `ocr_result_pages`: la tabla de páginas, su trigger de coherencia y sus GRANT.
 - **Reintento:** un error transitorio vuelve a `PENDING` con un job nuevo de `document.ocr` cuya espera crece con cada intento (máximo 1 hora), en la misma transacción. El worker cuenta los intentos (`ocr_attempts`); pg-boss solo reintenta un job que murió de forma inesperada.
-- **Configuración del worker:** `OCR_ENABLED` y `OCR_PDF_ENABLED` (falsos por defecto), `OCR_PDF_P7_RESOLVED`, y los valores que salen de la evaluación, sin valores por defecto y obligatorios con el OCR activado: `OCR_IMAGE_REPRESENTATION` (B3), `OCR_MAX_ATTEMPTS`, `OCR_LEASE_SECONDS`, `OCR_RETRY_DELAY_SECONDS` y `OCR_MAX_PAGES`.
+- **Configuración del worker:** `OCR_ENABLED` y `OCR_PDF_ENABLED` (falsos por defecto), `OCR_PDF_P7_RESOLVED`, y los valores que salen de la evaluación, sin valores por defecto y obligatorios con el OCR activado: `OCR_IMAGE_REPRESENTATION` (B3), `OCR_MAX_ATTEMPTS`, `OCR_LEASE_SECONDS`, `OCR_RETRY_DELAY_SECONDS` y `OCR_MAX_PAGES` (**PENDIENTE DE DECISIÓN B7**). Un texto que PostgreSQL no puede guardar (U+0000) se trata como respuesta inválida permanente.
 - **Activación:** script `pnpm --filter @legaltech/worker ocr:activate` con `OCR_ACTIVATION_DATABASE_URL` (el propietario).
 - **Timestamp de solicitud (OCR-A10.6): no implementado. CONTRADICCIÓN DOCUMENTAL CONOCIDA — REQUIERE DECISIÓN.**
   - OCR-A10.6 incluye el momento en que se solicitó el OCR entre los metadatos de cada ejecución;
@@ -414,6 +433,7 @@ users 1 ── * documents (uploaded_by)
 - `document_scan_states` y `document_scan` (Fase 3, segunda rebanada): nuevos estados de `document_status`; columnas `scan_*` y `sanitized_storage_key`; esquema `pgboss` con la cola `document.scan`; permisos del rol de worker.
 - `document_reprocess_queue` (Fase 3, 2026-10-01): crea la cola `document.reprocess` (solo inserta su fila; sin DDL ni cambios de permisos).
 - `document_ocr_states` (Fase 3, 2026-10-02): los valores nuevos de `document_ocr_status`.
+- `ocr_result_pages` (Fase 3, 2026-10-03; OCR-A10.5): tabla `ocr_result_pages` con clave primaria `(ocr_result_id, page_number)`, CHECK de número de página y trigger diferido de coherencia (`SECURITY DEFINER`); INSERT para el worker y SELECT de `ocr_results` y `ocr_result_pages` para la API.
 - `document_ocr` (Fase 3, 2026-10-02):
   - columnas `ocr_attempts` y `ocr_started_at` e índice de `ocr_status`;
   - enums `ocr_result_outcome` y `ocr_representation`, tabla `ocr_results` con su CHECK de coherencia;
@@ -432,7 +452,7 @@ El rol de propietario (migraciones) crea las tablas y el esquema `pgboss`. Dos r
 | `users`, `sessions`, `email_verification_tokens`, `password_reset_tokens`, `email_outbox` | `SELECT`, `INSERT`, `UPDATE` |
 | `audit_logs` | `SELECT`, `INSERT` (append-only) |
 | `documents` | `SELECT`, `INSERT` (nunca cambia el estado del tratamiento ni del OCR: eso lo hace el worker) |
-| `ocr_results` | ninguno (el SELECT llegará con la lectura del texto, OCR-A10.5) |
+| `ocr_results`, `ocr_result_pages` | `SELECT` (lectura del texto por el propietario; nunca escribe) |
 | Esquema `pgboss` | `USAGE`; `SELECT` en `pgboss.version` y `pgboss.queue`; `INSERT` y `SELECT (id)` en `pgboss.job_common` (encolar; `SELECT (id)` lo exige `INSERT … RETURNING id`) |
 | `cases`, `case_status_history` | `SELECT`, `INSERT` (sin transiciones en esta rebanada; `UPDATE` en `cases` se concederá con la primera transición) |
 | `_prisma_migrations` | ninguno |
@@ -445,7 +465,7 @@ El rol del worker (`legaltech_worker`) tiene exactamente lo que el tratamiento d
 | Tabla | Permisos |
 |---|---|
 | `documents` | `SELECT`, y `UPDATE` solo de `status`, `scan_attempts`, `scan_started_at`, `scanned_at`, `scan_signature`, `sanitized_storage_key`, `ocr_status`, `ocr_attempts` y `ocr_started_at` (permiso por columna: el nombre, la clave del original, el caso y el tamaño no se pueden cambiar) |
-| `ocr_results` | Solo `INSERT`: ni `SELECT` (sin `RETURNING`), ni `UPDATE`, ni `DELETE` |
+| `ocr_results`, `ocr_result_pages` | Solo `INSERT`: ni `SELECT` (sin `RETURNING`), ni `UPDATE`, ni `DELETE` |
 | `audit_logs` | `INSERT` |
 | Esquema `pgboss` | `USAGE`; sin `CREATE` |
 | `pgboss.job_common` (tabla de la cola) | `SELECT`, `INSERT`, `UPDATE`, `DELETE` (obtener, completar, reintentar y caducar trabajos; retención) |
@@ -463,6 +483,5 @@ El rol del worker (`legaltech_worker`) tiene exactamente lo que el tratamiento d
 - Datos de MFA (TOTP y códigos de recuperación), previo a producción para ADMIN y SUPER_ADMIN (ADR-002).
 - Política de retención y borrado de datos personales y de auditoría (validación jurídica), que incluye el texto OCR y sus ejecuciones anteriores.
 - OCR, lo que falta (sección «OCR del documento»):
-  - el almacenamiento y la lectura del texto (OCR-A10.5, tras B8);
-  - el proveedor (P4) y los valores de B5, B6 y B7;
+  - el proveedor (P4) y los valores de B5, B6 y B7 (el límite de páginas, PENDIENTE DE DECISIÓN B7);
   - el timestamp de solicitud (contradicción entre OCR-A10.6 y OCR-A12, pendiente de decisión).

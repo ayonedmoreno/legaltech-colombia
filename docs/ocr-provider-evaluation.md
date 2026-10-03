@@ -112,9 +112,9 @@ Los candidatos admitidos dependen de OCR-C1 (si se permite un OCR externo, bloqu
   - los sintéticos no reflejan la calidad real: no justifican P4.
 - **Idempotencia del proveedor:** no aplica a un motor local. Queda pendiente para cada candidato externo, si alguno llega a admitirse (OCR-C1).
 
-### Insumo para OCR-A10.5 (no es una decisión)
+### Insumo para OCR-A10.5
 
-Con los tamaños de B8, guardar el texto en PostgreSQL es viable: unos pocos KB por página y, como mucho, el límite de páginas por documento. La propuesta y sus alternativas se presentan al responsable del producto para que decida; aquí solo se registran los datos.
+Con los tamaños de B8 (unos pocos KB por página, acotados por el límite de páginas), el responsable del producto decidió el 2026-10-03 guardar el texto en PostgreSQL y no contarlo para la cuota (`ARCHITECTURE_REPORT.md` §5). El límite de páginas por documento sigue **PENDIENTE DE DECISIÓN B7**: esta ronda lo midió, pero no lo decide.
 
 ## 5. Decisión
 

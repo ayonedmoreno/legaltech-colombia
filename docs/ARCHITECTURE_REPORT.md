@@ -173,7 +173,9 @@ Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos 
 | OCR-A6 | Solo un documento `CLEAN` entra al OCR. Un `SCAN_FAILED` reprocesado que llega a `CLEAN` entra por el camino normal. Sin backfill de documentos anteriores. |
 | OCR-A7 | El PDF depende de P7 solo si su procesamiento lo envía a un tercero. Con OCR propio no queda bloqueado por P7, pero debe superar la prueba B4. Los PDF excluidos no reciben backfill automático. |
 | OCR-A9 | Lo normativo va en las SPEC existentes; las decisiones, en este informe; el protocolo y la evidencia de la evaluación de proveedores, en `docs/ocr-provider-evaluation.md`. Esto es una diferencia explícita y aprobada respecto de no guardar evidencia de ejecución en `docs/`: esa evidencia es el insumo que exige P4. `AI_SPEC.md` sigue reservado para la fase de IA. |
-| OCR-A10 | El estado vive en `documents.ocr_status`, con 5 estados base más `NOT_APPLICABLE` (definitivo) y `EXCLUDED` (reversible). Hay un `OcrResult` por ejecución, con metadatos técnicos, y el texto de ejecuciones anteriores se conserva provisionalmente hasta que exista una política de retención. El texto va por página, sin coordenadas, con solo normalización técnica, y sin campo de verificación. **OCR-A10.5 (ubicación del texto y cuota): abierto hasta la medición B8.** |
+| OCR-A10 | El estado vive en `documents.ocr_status`, con 5 estados base más `NOT_APPLICABLE` (definitivo) y `EXCLUDED` (reversible). Hay un `OcrResult` por ejecución, con metadatos técnicos, y el texto de ejecuciones anteriores se conserva provisionalmente hasta que exista una política de retención. El texto va por página, sin coordenadas, con solo normalización técnica, y sin campo de verificación. |
+| OCR-A10.5 | *(Decidido el 2026-10-03, tras la ronda 1.)* El texto se guarda en PostgreSQL, en una fila de `OcrResultPage` por página de cada ejecución. El worker solo inserta; la API lee, siempre después de comprobar propietario → caso → documento. |
+| Cuota OCR | *(Decidido el 2026-10-03.)* El texto OCR **no** cuenta dentro de los 100 MiB, que siguen siendo solo los archivos almacenados. El límite de páginas por documento está **PENDIENTE DE DECISIÓN B7**. |
 | OCR-A11 | Operación con el patrón del escaneo: estados escritos junto al resultado del antivirus, activación explícita, PDF desactivado por defecto con salvaguarda de arranque, errores transitorios frente a permanentes, reprocesamiento ADMIN de `FAILED`, sin auditar las exclusiones y logs sin el error crudo del proveedor. El riesgo de pagar dos veces con un OCR externo asíncrono solo se acepta provisionalmente, hasta comprobar en P4 si el proveedor ofrece idempotencia. |
 | OCR-A12 | `document:read_ocr` (`USER` propietario) y `document:reprocess_ocr` (`ADMIN`), con 404 para el resto. La lectura responde 200 con `pages` vacío si no hay texto. La ejecución vigente es la última `COMPLETED` y solo se entrega con `ocr_status = COMPLETED`. El worker solo inserta en `ocr_results` (sin SELECT ni `RETURNING`); la API solo lee; nadie actualiza ni borra resultados. El enum va en una migración separada. La activación se hace con un script del propietario, con una matriz por estado y el invariante «con el OCR activo, ningún `CLEAN` en `NOT_STARTED`». |
 | OCR-A13 | El texto OCR es contenido no confiable desde la Fase 3. |
@@ -210,6 +212,7 @@ Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos 
 **Fuera de la Fase 3:** extracción de entidades, revisión y corrección, IA y RAG, backfill, y la política definitiva de retención y eliminación.
 
 **Pendientes que condicionan el cierre:**
+- **OCR-A10.5:** resuelta el 2026-10-03 (PostgreSQL); el texto no cuenta para la cuota.
 - **Pregunta 8b: resuelta el 2026-10-01 (opción A).**
   - Se admiten documentos sintéticos en la primera ronda de la evaluación, con estas condiciones: sin datos personales reales, sin logos ni membretes de autoridades reales, plantillas genéricas y generación reproducible.
   - Con ellos son concluyentes B8 (si la densidad de texto es representativa; decide OCR-A10.5), B5, B7, B4, B3 y la idempotencia del proveedor. La calidad (B2) es provisional y nunca justifica P4 por sí sola.
@@ -219,16 +222,22 @@ Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos 
 - **Pregunta 8a** (quién hace la validación jurídica de P3 y del OCR externo, y del uso de documentos reales anonimizados en la evaluación): bloqueada. P4, y con él el cierre de la Fase 3, depende también de ella.
 - **Pregunta 7** (lista aprobada de entidades y formatos): bloqueada, pero no condiciona la Fase 3 tras OCR-A1.
 
-**OCR, primera parte de la implementación (2026-10-02; no cumple el criterio de salida)**
+**OCR, estado de la implementación (2026-10-03; no cumple el criterio de salida)**
+- **Texto en PostgreSQL (2026-10-03):**
+  - tabla `ocr_result_pages`, escrita por el worker en la misma transacción que su `OcrResult`;
+  - clave primaria por página y trigger diferido de coherencia;
+  - permisos: el worker, solo INSERT; la API, solo SELECT;
+  - lectura del propietario (`GET …/ocr`) y visualización en la web con el aviso de texto no verificado;
+  - red-team específico de almacenamiento, IDOR, XSS y permisos.
+
+**OCR, primera parte de la implementación (2026-10-02)**
 - **Implementado, detrás de `OcrProvider` y probado con proveedores falsos** (tests unitarios, de integración con PostgreSQL y pg-boss reales, de privilegios y red-team):
   - los estados (OCR-A10.2) escritos junto al resultado del antivirus;
   - el reclamo con su token, los resultados por ejecución en `ocr_results`, los reintentos con espera creciente, el barrido de reclamos abandonados y el reprocesamiento ADMIN (API y worker);
   - la activación del propietario con su invariante, la salvaguarda del PDF frente a P7 y los logs sin el error del proveedor.
 - **Permisos:** el worker actualiza las tres columnas de OCR e inserta en `ocr_results` sin poder leerlos; la API no tiene ninguno en esa tabla.
-- **Desactivado por defecto:** el worker no arranca con el OCR activado mientras falten el proveedor (P4) y el almacenamiento del texto (OCR-A10.5).
-- **Pendiente:**
-  - el almacenamiento y la lectura del texto (OCR-A10.5, tras B8), con `document:read_ocr`;
-  - P4 y los valores de B5, B6 y B7.
+- **Desactivado por defecto:** el worker no arranca con el OCR activado mientras falte el proveedor (P4).
+- **Pendiente:** P4 y los valores de B5, B6 y B7 (el límite de páginas, PENDIENTE DE DECISIÓN B7).
 - **CONTRADICCIÓN DOCUMENTAL CONOCIDA — REQUIERE DECISIÓN:**
   - OCR-A10.6 incluye el «timestamp de solicitud» entre los metadatos de cada ejecución;
   - OCR-A12 solo aprobó como columnas del worker las de estado, intentos e inicio;

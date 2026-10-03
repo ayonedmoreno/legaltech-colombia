@@ -1,9 +1,9 @@
 # API_SPEC.md
 
-**Versión:** 0.10 (OCR: reprocesamiento ADMIN y estados implementados; Fase 3)
+**Versión:** 0.11 (OCR: lectura del texto por el propietario; Fase 3)
 **Fecha:** 2026-10-01
 **Estado:** Aprobado (cierre de las Fases 1 y 2; rebanadas 1 y 2 de la Fase 3, 2026-09-27 y 2026-09-28). Describe la implementación actual. En la sección «OCR del documento» cada endpoint indica si está implementado o solo previsto.
-**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios; reprocesamiento administrativo de un tratamiento fallido). OCR: reprocesamiento ADMIN y estados implementados; la lectura del texto, prevista. Pagos y demás se añaden con su fase.
+**Alcance:** autenticación, infraestructura, casos (crear, listar y consultar los propios) y documentos del caso (subir, listar y descargar los propios; reprocesamiento administrativo de un tratamiento fallido). OCR: estados, lectura del texto por el propietario y reprocesamiento ADMIN. Pagos y demás se añaden con su fase.
 **Referencias:** ADR-002, ADR-003, `SECURITY_SPEC.md`, `DATABASE_SPEC.md`, `packages/contracts`.
 
 Este documento se mantiene manualmente junto a los esquemas de `packages/contracts` (la API todavía no genera OpenAPI). Toda modificación de un endpoint actualiza este archivo en el mismo cambio.
@@ -326,7 +326,7 @@ Pide que un documento cuyo tratamiento de seguridad falló (`SCAN_FAILED`) se tr
 
 Diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; modelo y estados en `DATABASE_SPEC.md`, «OCR del documento»).
 
-**El OCR no está activo:** no hay proveedor (P4) ni almacenamiento del texto (OCR-A10.5). Por eso ningún documento tiene hoy texto ni un OCR `FAILED`.
+**El OCR no está activo:** no hay proveedor (P4). Por eso ningún documento tiene hoy texto ni un OCR `FAILED`. El texto se guarda en PostgreSQL (OCR-A10.5) y no cuenta para la cuota de 100 MiB.
 
 #### `POST /api/admin/documents/:documentId/ocr/reprocess` (implementado)
 
@@ -338,9 +338,9 @@ Diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; mod
 - **404:** cualquier otro rol (también el `USER` propietario), documento inexistente o identificador inválido.
 - No da acceso al contenido ni al texto, y nunca es automático.
 
-#### `GET /api/cases/:caseId/documents/:documentId/ocr` (previsto, no implementado)
+#### `GET /api/cases/:caseId/documents/:documentId/ocr` (implementado)
 
-`document:read_ocr`; solo el `USER` propietario. Depende del almacenamiento del texto (OCR-A10.5).
+`document:read_ocr`; solo el `USER` propietario. Respuesta con `Cache-Control: no-store`.
 - **200:** `{ "ocrStatus": "...", "pages": [{ "number": 1, "text": "string" }] }`.
   - `pages` solo trae texto si `ocrStatus` es `COMPLETED`, y es el de la ejecución vigente (la última `COMPLETED`).
   - En cualquier otro estado, `pages` es `[]`. **Una lista vacía significa «no hay texto disponible en este estado», no que el documento tenga cero páginas.** Tras un reprocesamiento que termina `FAILED` no se devuelve el texto de una ejecución anterior.
@@ -348,7 +348,9 @@ Diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; mod
   - puede contener errores, y la interfaz muestra siempre ese aviso;
   - se trata como texto y nunca como HTML o instrucciones;
   - no se registra en logs.
-- **404:** cualquier otro rol, o un caso o documento ajeno, inexistente o con identificador inválido. La lectura no se audita (OCR-A14).
+- **401:** `UNAUTHENTICATED`.
+- **404:** cualquier otro rol (`PROFESSIONAL`, `ADMIN`, `SUPER_ADMIN`), o un caso o documento ajeno, inexistente o con identificador inválido. La lectura no se audita (OCR-A14).
+- No devuelve ejecuciones históricas, y no hay edición ni corrección del texto.
 
 **Eventos de auditoría** (sin texto, fragmentos, valores ni hash del texto; el proveedor queda en `ocr_results`, no en el evento; OCR-A14): ver la tabla de eventos. No se auditan el reclamo, los reintentos, la lectura ni las marcas `EXCLUDED` y `NOT_APPLICABLE`.
 

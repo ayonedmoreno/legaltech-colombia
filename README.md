@@ -28,11 +28,12 @@ LegalTech platform for traffic and transport infractions in Colombia.
   JPEG and PNG, a copy without the metadata the policy removes (EXIF/GPS, XMP, IPTC, comments; PNG
   text chunks). The original is kept untouched and PDFs are never modified. Only a `CLEAN`
   document can be downloaded; a periodic sweep recovers abandoned treatments.
-- **Phase 3, OCR (first implementation part, off):** a `CLEAN` document gets its OCR state with
-  the antivirus result, and the worker has the OCR pipeline (claims, per-execution results,
-  retries, recovery, ADMIN reprocessing, owner activation) behind `OcrProvider`. It stays off
-  (`OCR_ENABLED=false`) and cannot be turned on yet: no provider is chosen (P4) and where the text
-  is stored is not decided (OCR-A10.5).
+- **Phase 3, OCR (implemented, off):** a `CLEAN` document gets its OCR state with the antivirus
+  result, and the worker has the OCR pipeline (claims, per-execution results with their text per
+  page in PostgreSQL, retries, recovery, ADMIN reprocessing, owner activation) behind
+  `OcrProvider`. The owner reads the unverified text of their document (`GET …/ocr`, shown escaped
+  in `/casos/[id]`). It stays off (`OCR_ENABLED=false`) and cannot be turned on yet: no provider is
+  chosen (P4).
 
 ## Prerequisites
 
