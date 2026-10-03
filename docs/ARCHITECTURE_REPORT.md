@@ -162,7 +162,7 @@ La Fase 1 se da por cerrada solo cuando se cumple todo lo siguiente:
 
 **Fase 3: diseño del OCR** *(decisiones aprobadas por el responsable del producto el 2026-10-01; diseño, no implementación)*
 
-Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos ni código. El detalle está en `DATABASE_SPEC.md` («OCR del documento»), `API_SPEC.md` («OCR del documento (previsto)») y `SECURITY_SPEC.md`. La evaluación de proveedores está en `docs/ocr-provider-evaluation.md` (documento de trabajo, no normativo).
+Rebanada documental: estas decisiones, por sí solas, no autorizaban migraciones, permisos ni código; las implementaciones del 2026-10-02 y del 2026-10-03 se autorizaron después de forma expresa. El detalle está en `DATABASE_SPEC.md` («OCR del documento»), `API_SPEC.md` («OCR del documento») y `SECURITY_SPEC.md`. La evaluación de proveedores está en `docs/ocr-provider-evaluation.md` (documento de trabajo, no normativo).
 
 | ID | Decisión |
 |---|---|
@@ -225,7 +225,7 @@ Rebanada documental: ninguna de estas decisiones autoriza migraciones, permisos 
 **OCR, estado de la implementación (2026-10-03; no cumple el criterio de salida)**
 - **Texto en PostgreSQL (2026-10-03):**
   - tabla `ocr_result_pages`, escrita por el worker en la misma transacción que su `OcrResult`;
-  - clave primaria por página y trigger diferido de coherencia;
+  - clave primaria por página y trigger diferido de coherencia (función `SECURITY DEFINER` endurecida: nombres calificados y `search_path = pg_catalog, pg_temp`; una ejecución `COMPLETED` tiene al menos una página);
   - permisos: el worker, solo INSERT; la API, solo SELECT;
   - lectura del propietario (`GET …/ocr`) y visualización en la web con el aviso de texto no verificado;
   - red-team específico de almacenamiento, IDOR, XSS y permisos.

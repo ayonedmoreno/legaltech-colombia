@@ -1,6 +1,6 @@
 # DATABASE_SPEC.md
 
-**Versión:** 0.10 (OCR: texto por página en PostgreSQL y lectura por el propietario; Fase 3)
+**Versión:** 0.11 (OCR: texto por página en PostgreSQL, lectura por el propietario y endurecimiento de la función `SECURITY DEFINER`; Fase 3)
 **Fecha:** 2026-10-01
 **Estado:** Aprobado (cierre de las Fases 1 y 2, 2026-09-27; rebanadas 1 y 2 de la Fase 3 aprobadas el 2026-09-27 y el 2026-09-28). El diseño del OCR (sección «OCR del documento») se aprobó el 2026-10-01; está implementado en parte (2026-10-02 y 2026-10-03) y la sección distingue lo implementado de lo pendiente.
 **Alcance:** `User`, `Session`, `EmailVerificationToken`, `PasswordResetToken`, `AuditLog` y `EmailOutbox` (Sprint 1B); `Case` y `CaseStatusHistory` (Fase 2); `Document` (Fase 3, primera rebanada).
@@ -309,7 +309,7 @@ pg-boss 12.35.0 sobre el mismo PostgreSQL (ADR-001 punto 7), en el esquema `pgbo
   - **Worker** (`startPgBossForWorker`): `supervise: true` y `persistQueueStats: false`. Consume la cola y hace la supervisión (caducidad de trabajos, conteos de la cola), el mantenimiento (retención de trabajos y limpieza de dependencias) y la resolución de flujos, todo DML. No envía trabajos con dependencias ni usa publicación/suscripción.
 - Reintentos de la cola: 4 (5 intentos en total), con espera creciente; el worker además cuenta los intentos en `scan_attempts` y marca `SCAN_FAILED` al agotarlos.
 
-#### OCR del documento (Fase 3; diseño aprobado el 2026-10-01; primera parte implementada el 2026-10-02)
+#### OCR del documento (Fase 3; diseño aprobado el 2026-10-01; implementado el 2026-10-02 y el 2026-10-03, con el texto en PostgreSQL; desactivado hasta P4)
 
 Diseño aprobado por el responsable del producto el 2026-10-01 (decisiones OCR-A1 a OCR-A15, registradas en `ARCHITECTURE_REPORT.md` §5).
 
@@ -375,11 +375,11 @@ Lo que depende de la evaluación de proveedores (`docs/ocr-provider-evaluation.m
 
 - **Clave primaria `(ocr_result_id, page_number)`:** una página nunca se guarda dos veces en una ejecución.
 - **Coherencia, comprobada al confirmar la transacción** con un trigger diferido (`ocr_result_pages_consistent`):
-  - una ejecución `COMPLETED` tiene exactamente las páginas 1..n, siendo n `ocr_results.pages`;
+  - una ejecución `COMPLETED` tiene exactamente las páginas 1..n, siendo n `ocr_results.pages` y n ≥ 1 (CHECK `ocr_results_completed_has_pages`: una ejecución completada sin páginas no existe; el worker trata una respuesta sin páginas como `invalid_response`);
   - una `FAILED` no tiene ninguna;
   - no se pueden añadir páginas a una ejecución ya terminada.
 
-  La función es `SECURITY DEFINER` para poder contar las páginas como propietario, ya que el worker no puede leer esas tablas. No da ningún permiso a nadie y no se puede llamar directamente.
+  La función es `SECURITY DEFINER` para poder contar las páginas como propietario, ya que el worker no puede leer esas tablas. No da ningún permiso a nadie y no se puede llamar directamente (sin EXECUTE para PUBLIC ni para los roles de ejecución). Como se ejecuta en la sesión de quien dispara el trigger, no resuelve nada a través de esa sesión: todos los objetos van calificados con `public.`, la tabla del trigger se compara por OID (`TG_RELID`) y su `search_path` es `pg_catalog, pg_temp`, con el esquema temporal al final (si no aparece, PostgreSQL lo busca primero y una tabla temporal con el mismo nombre podría suplantar a las reales).
 - **Escritura:** el worker inserta el `OcrResult`, sus páginas, el estado `COMPLETED` y el evento sin contenido en **una sola transacción**, primero comprobando su reclamo. Si la escritura de las páginas falla, no se registra nada: el documento sigue `PROCESSING` y lo recupera el barrido.
 - **Lectura:** solo la API, para el propietario: la cadena documento → caso → propietario y el estado `COMPLETED` se comprueban en la misma sentencia que lee las páginas de la última ejecución completada.
 - **Activación (OCR-A11, OCR-A12):** activar el OCR es un paso explícito del propietario (un script, no una migración automática), separado del despliegue:
@@ -434,6 +434,7 @@ users 1 ── * documents (uploaded_by)
 - `document_reprocess_queue` (Fase 3, 2026-10-01): crea la cola `document.reprocess` (solo inserta su fila; sin DDL ni cambios de permisos).
 - `document_ocr_states` (Fase 3, 2026-10-02): los valores nuevos de `document_ocr_status`.
 - `ocr_result_pages` (Fase 3, 2026-10-03; OCR-A10.5): tabla `ocr_result_pages` con clave primaria `(ocr_result_id, page_number)`, CHECK de número de página y trigger diferido de coherencia (`SECURITY DEFINER`); INSERT para el worker y SELECT de `ocr_results` y `ocr_result_pages` para la API.
+- `ocr_pages_guard_hardening` (Fase 3, 2026-10-03; OCR-A10.5): la función del trigger con nombres calificados, `TG_RELID` y `search_path = pg_catalog, pg_temp`; CHECK `ocr_results_completed_has_pages` (una ejecución `COMPLETED` tiene al menos una página). Sin cambios de permisos.
 - `document_ocr` (Fase 3, 2026-10-02):
   - columnas `ocr_attempts` y `ocr_started_at` e índice de `ocr_status`;
   - enums `ocr_result_outcome` y `ocr_representation`, tabla `ocr_results` con su CHECK de coherencia;

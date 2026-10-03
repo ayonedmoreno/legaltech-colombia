@@ -157,7 +157,7 @@ Toda petición que modifica exige la cookie `__Host-csrf`, la cabecera `X-CSRF-T
   - los logs solo llevan códigos normalizados, nunca el error del proveedor.
 - **Texto (OCR-A10.5):**
   - se guarda en PostgreSQL (`ocr_result_pages`), en la misma transacción que su `OcrResult`;
-  - la base de datos garantiza las páginas 1..n, sin duplicados, y que no cambia después;
+  - la base de datos garantiza las páginas 1..n (n ≥ 1), sin duplicados, y que no cambia después, con una función `SECURITY DEFINER` de nombres calificados y `search_path = pg_catalog, pg_temp`, que solo puede ejecutar el propietario;
   - no cuenta para la cuota.
 - **Lectura:** solo el `USER` propietario (`document:read_ocr`), con 404 para cualquier otro rol o recurso ajeno; nunca texto histórico si el estado actual no es `COMPLETED`; se devuelve sin cachear.
 - **Web:** texto escapado (nunca HTML) y siempre con el aviso de no verificado; sin edición.

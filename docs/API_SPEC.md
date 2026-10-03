@@ -322,7 +322,7 @@ Pide que un documento cuyo tratamiento de seguridad falló (`SCAN_FAILED`) se tr
 
 **Fuera de esta rebanada:** OCR, limpieza de metadata de PDF (decisión pendiente), versiones de documentos (`DocumentVersion`), borrado de documentos y cualquier transición de estado del caso.
 
-### OCR del documento (diseño aprobado el 2026-10-01; primera parte implementada el 2026-10-02)
+### OCR del documento (diseño aprobado el 2026-10-01; implementado el 2026-10-02 y el 2026-10-03, con el texto en PostgreSQL; desactivado hasta P4)
 
 Diseño aprobado (decisiones OCR-A1 a OCR-A15, `ARCHITECTURE_REPORT.md` §5; modelo y estados en `DATABASE_SPEC.md`, «OCR del documento»).
 

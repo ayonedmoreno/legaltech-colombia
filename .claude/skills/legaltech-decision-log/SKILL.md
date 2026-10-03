@@ -274,6 +274,7 @@ description: Registro de las decisiones importantes de LegalTech Colombia (fecha
   - el texto OCR **no** cuenta en los 100 MiB, que siguen siendo solo los archivos almacenados.
 - **Implementación:**
   - tabla `ocr_result_pages`: clave primaria `(ocr_result_id, page_number)` y trigger diferido de coherencia (`SECURITY DEFINER`, solo comprueba);
+  - auditoría final del 2026-10-03: la función resolvía nombres sin calificar con `pg_temp` buscado primero, y un rol con TEMP podía suplantar las tablas y confirmar un resultado incoherente. Se corrigió por mínimo privilegio en la migración `ocr_pages_guard_hardening` (nombres `public.`, `TG_RELID`, `search_path = pg_catalog, pg_temp`). En la misma migración, una ejecución `COMPLETED` exige al menos una página (derivado de «páginas 1..n» y de que `pages: []` nunca significa cero páginas); una respuesta sin páginas es `invalid_response`;
   - escritura atómica con el resultado;
   - `GET …/ocr` solo para el `USER` propietario, con 404 para el resto;
   - vista web con el texto escapado y el aviso de no verificado;

@@ -24,7 +24,7 @@ description: Fotografía del estado de LegalTech Colombia al cierre de la rebana
   - `a6c14de` primera parte de la implementación del OCR;
   - `dc9268d` corrección de la exclusión de PDF frente a A7;
   - `bfe52dc` ronda 1 de la evaluación del OCR (instrumento aislado en `tools/ocr-evaluation/` y resultados en `docs/ocr-provider-evaluation.md`);
-  - los commits de OCR-A10.5 (texto en PostgreSQL, lectura por el propietario, vista web), del 2026-10-03.
+  - los commits de OCR-A10.5 (texto en PostgreSQL, lectura por el propietario, vista web) y de su auditoría final (endurecimiento de la función `SECURITY DEFINER`), del 2026-10-03.
 - **Push:** no realizado; requiere autorización explícita (DEC-23).
 - **Working tree:** `.agents/` no está versionado: es un artefacto externo que no se toca (DEC-23). `.claude/settings.local.json` está ignorado por la configuración global de git.
 - **Git exige** `-c safe.directory=C:/legaltech-colombia`.
